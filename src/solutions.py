@@ -32,12 +32,12 @@ def get_diverse_solutions(res,
 
     plan_cols = [
         "UIV_implant",
-        "num_fused_levels",
+        "num_interbody_fusion_levels",
         "ALIF",
         "XLIF",
         "TLIF",
         "num_rods",
-        "num_screws",
+        "num_pelvic_screws",
         "osteotomy",
     ]
 

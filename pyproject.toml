@@ -16,8 +16,7 @@ seaborn = "^0.13"
 jupyter = "^1.0"
 openpyxl = "^3.0"
 pymoo = "^0.6.0"
-
-[tool.poetry.group.dev.dependencies]
+xgboost = {version = "^2.1", python = "^3.10"}
 
 [build-system]
 requires = ["poetry-core"]
