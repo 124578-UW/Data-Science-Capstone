@@ -16,6 +16,7 @@ seaborn = "^0.13"
 jupyter = "^1.0"
 openpyxl = "^3.0"
 pymoo = "^0.6.0"
+xgboost = ">=2.0,<3.0"
 
 [tool.poetry.group.dev.dependencies]
 
