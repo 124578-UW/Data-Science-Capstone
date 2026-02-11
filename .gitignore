@@ -1,0 +1,8 @@
+# Ignore local data
+data/
+
+# macOS junk
+.DS_Store
+
+# Python
+__pycache__/
