@@ -148,8 +148,8 @@ def score_rsa(rsa: float) -> int:
     Based on GAP score methodology:
     - 3: RSA > 18 (severe positive malalignment)
     - 1: 10.1 <= RSA <= 18 (moderate positive malalignment)
-    - 1: -7 <= RSA <= 10 (aligned)
-    - 0: RSA < -7 (negative malalignment)
+    - 0: -7 <= RSA <= 10 (aligned)
+    - 1: RSA < -7 (negative malalignment)
     
     Note: Ideal Global Tilt = PI x 0.48 - 15
     """
@@ -158,9 +158,9 @@ def score_rsa(rsa: float) -> int:
     elif 10.1 <= rsa <= 18:
         return 1
     elif -7 <= rsa < 10.1:
-        return 1
-    else:  # rsa < -7
         return 0
+    else:  # rsa < -7
+        return 1
 
 
 def score_age(age: float) -> int:
