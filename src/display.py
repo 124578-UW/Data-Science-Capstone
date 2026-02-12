@@ -494,7 +494,7 @@ def _display_solutions_side_by_side(solutions_df, patient_fixed):
     df_combined = pd.DataFrame(rows)
     
     print("=" * 60)
-    print("SOLUTIONS COMPARISON (SIDE BY SIDE)")
+    print("SOLUTIONS COMPARISON")
     print("=" * 60)
     
     display(df_combined)
