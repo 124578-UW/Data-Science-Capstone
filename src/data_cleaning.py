@@ -25,7 +25,7 @@ def clean_data(df):
 
     #create column with updated num_levels
     df["num_levels"] = pd.to_numeric(df["num_levels"], errors="coerce").astype("Int64")
-    df.loc[df["num_levels"] >= 10, "updated_num_levels"] = "higher"
-    df.loc[df["num_levels"] < 10, "updated_num_levels"] = "lower"
+    df.loc[df["num_levels"] >= 10, "num_levels_cat"] = "higher"
+    df.loc[df["num_levels"] < 10, "num_levels_cat"] = "lower"
 
     return df
