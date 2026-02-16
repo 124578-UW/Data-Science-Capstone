@@ -13,7 +13,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # Raw data (input)
-DATA_RAW = PROJECT_ROOT / "data" / "raw" / "MSDS_cleaned_0122.xlsx"
+DATA_RAW = PROJECT_ROOT / "data" / "raw" / "MSDS_cleaned_with_CCI_ODI.xlsx"
 
 # Processed/cleaned data (output from 00_data_cleaning.ipynb)
 DATA_PROCESSED = PROJECT_ROOT / "data" / "processed" / "cleaned_for_modeling.csv"
@@ -116,3 +116,34 @@ PLAN_COLS = [var["col_name"] for var in DECISION_VAR_SPECS]
 DECISION_VAR_LOWER_BOUNDS = np.array([var["lower"] for var in DECISION_VAR_SPECS], dtype=int)
 DECISION_VAR_UPPER_BOUNDS = np.array([var["upper"] for var in DECISION_VAR_SPECS], dtype=int)
 DECISION_VAR_MAPPING = {i: name for i, name in enumerate(PLAN_COLS)}
+
+# ============================================================================
+# PATIENT FIXED VARIABLES
+# ============================================================================
+PATIENT_FIXED_COLS = [
+    "age",
+    "sex",
+    "bmi",
+    "C7CSVL_preop",
+    "SVA_preop",
+    "T4PA_preop",
+    "L1PA_preop",
+    "LL_preop",
+    "L4S1_preop",
+    "PT_preop",
+    "PI_preop",
+    "SS_preop",
+    "cobb_main_curve_preop",
+    "FC_preop",
+    "tscore_femneck_preop",
+    "HU_UIV_preop",
+    "HU_UIVplus1_preop",
+    "HU_UIVplus2_preop",
+    "gap_category",      # Preop GAP category for composite score
+    "gap_score_preop",   # Preop GAP score
+    "global_tilt",       # Preop Global Tilt (used as GlobalTilt_preop)
+    "CCI",
+    "ASA_CLASS"             
+    #"smoking"           #add to mechanical failure model only
+    ""
+]
