@@ -144,6 +144,18 @@ PATIENT_FIXED_COLS = [
     "global_tilt",       # Preop Global Tilt (used as GlobalTilt_preop)
     "CCI",
     "ASA_CLASS"             
-    #"smoking"           #add to mechanical failure model only
-    ""
 ]
+# ============================================================================
+# TARGETS
+# ============================================================================
+
+MECH_FAIL_TARGET = "mech_fail_last"
+# ============================================================================
+# MODEL FEATURE SETS
+# ============================================================================
+
+# Mechanical failure uses smoking additionally
+MECH_FAIL_FEATURES = PATIENT_FIXED_COLS + PLAN_COLS + ["smoking"]
+
+# Delta models do NOT use smoking
+DELTA_MODEL_FEATURES = PATIENT_FIXED_COLS + PLAN_COLS
