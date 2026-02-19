@@ -136,17 +136,21 @@ def display_optimized_solution(result, patient_fixed):
             "Postop (pred)": f"{round(pi_ll_postop, 1)} {post_s}",
         })
 
-    # L1PA (|val| ≤ 3)
+    # L1PA vs ideal (ideal = 0.5*PI - 21, tolerance ±3)
     l1pa_preop = patient_fixed.get("L1PA_preop")
     l1pa_postop = result["postop_values"].get("L1PA_postop")
-    if l1pa_preop is not None and l1pa_postop is not None:
-        pre_s = "✓" if abs(l1pa_preop) <= 3 else "⚠"
-        post_s = "✓" if abs(l1pa_postop) <= 3 else "⚠"
+    if l1pa_preop is not None and l1pa_postop is not None and pi_val is not None:
+        from src.scoring import calculate_ideal_l1pa
+        ideal_l1pa = calculate_ideal_l1pa(pi_val)
+        diff_pre = l1pa_preop - ideal_l1pa
+        diff_post = l1pa_postop - ideal_l1pa
+        pre_s = "✓" if abs(diff_pre) <= 3 else "⚠"
+        post_s = "✓" if abs(diff_post) <= 3 else "⚠"
         table_data.append({
-            "Parameter": "L1PA (|val|≤3)",
-            "Preop": f"{round(l1pa_preop, 1)} {pre_s}",
-            "Delta (pred)": round(l1pa_postop - l1pa_preop, 1),
-            "Postop (pred)": f"{round(l1pa_postop, 1)} {post_s}",
+            "Parameter": "L1PA−ideal (|d|≤3)",
+            "Preop": f"{round(diff_pre, 1)} {pre_s}",
+            "Delta (pred)": round(diff_post - diff_pre, 1),
+            "Postop (pred)": f"{round(diff_post, 1)} {post_s}",
         })
 
     # L4S1 (35-45)
@@ -368,18 +372,22 @@ def display_actual_outcomes(patient_id, patient_fixed, data_path=None):
                 "Postop (actual)": "-",
             })
 
-    # L1PA (|val| ≤ 3)
+    # L1PA vs ideal (ideal = 0.5*PI - 21, tolerance ±3)
     l1pa_pre = patient_row.get("L1PA_preop")
     l1pa_post = patient_row.get("L1PA_postop")
-    if pd.notna(l1pa_pre):
-        pre_s = "✓" if abs(l1pa_pre) <= 3 else "⚠"
+    if pd.notna(l1pa_pre) and pd.notna(pi_preop):
+        from src.scoring import calculate_ideal_l1pa
+        ideal_l1pa = calculate_ideal_l1pa(pi_preop)
+        diff_pre = l1pa_pre - ideal_l1pa
+        pre_s = "✓" if abs(diff_pre) <= 3 else "⚠"
         if pd.notna(l1pa_post):
-            post_s = "✓" if abs(l1pa_post) <= 3 else "⚠"
+            diff_post = l1pa_post - ideal_l1pa
+            post_s = "✓" if abs(diff_post) <= 3 else "⚠"
             table_actual.append({
-                "Parameter": "L1PA (|val|≤3)",
-                "Preop": f"{round(l1pa_pre, 1)} {pre_s}",
-                "Delta (actual)": round(l1pa_post - l1pa_pre, 1),
-                "Postop (actual)": f"{round(l1pa_post, 1)} {post_s}",
+                "Parameter": "L1PA−ideal (|d|≤3)",
+                "Preop": f"{round(diff_pre, 1)} {pre_s}",
+                "Delta (actual)": round(diff_post - diff_pre, 1),
+                "Postop (actual)": f"{round(diff_post, 1)} {post_s}",
             })
 
     # L4S1 (35-45)
@@ -577,17 +585,21 @@ def display_multiple_solutions(solutions_df, patient_fixed, side_by_side=True):
                 "Postop": f"{round(pi_ll_post, 1)} {post_s}",
             })
 
-        # L1PA (|val| ≤ 3)
+        # L1PA vs ideal (ideal = 0.5*PI - 21, tolerance ±3)
         l1pa_pre = patient_fixed.get("L1PA_preop")
         l1pa_post = row.get("L1PA_postop")
-        if l1pa_pre is not None and l1pa_post is not None:
-            pre_s = "✓" if abs(l1pa_pre) <= 3 else "⚠"
-            post_s = "✓" if abs(l1pa_post) <= 3 else "⚠"
+        if l1pa_pre is not None and l1pa_post is not None and pi_val is not None:
+            from src.scoring import calculate_ideal_l1pa
+            ideal_l1pa = calculate_ideal_l1pa(pi_val)
+            diff_pre = l1pa_pre - ideal_l1pa
+            diff_post = l1pa_post - ideal_l1pa
+            pre_s = "✓" if abs(diff_pre) <= 3 else "⚠"
+            post_s = "✓" if abs(diff_post) <= 3 else "⚠"
             table_data.append({
-                "Parameter": "L1PA (|val|≤3)",
-                "Preop": f"{round(l1pa_pre, 1)} {pre_s}",
-                "Delta": round(l1pa_post - l1pa_pre, 1),
-                "Postop": f"{round(l1pa_post, 1)} {post_s}",
+                "Parameter": "L1PA−ideal (|d|≤3)",
+                "Preop": f"{round(diff_pre, 1)} {pre_s}",
+                "Delta": round(diff_post - diff_pre, 1),
+                "Postop": f"{round(diff_post, 1)} {post_s}",
             })
 
         # L4S1 (35-45)
@@ -769,13 +781,16 @@ def _display_solutions_side_by_side(solutions_df, patient_fixed):
             pi_ll_row[f"Sol {idx+1}"] = "-"
     rows.append(pi_ll_row)
     
-    # L1PA (ideal: |L1PA| ≤ 3)
-    l1pa_row = {"Parameter": "L1PA (|val|≤3)"}
+    # L1PA vs ideal (ideal = 0.5*PI - 21, tolerance ±3)
+    from src.scoring import calculate_ideal_l1pa
+    l1pa_row = {"Parameter": "L1PA−ideal (|d|≤3)"}
     for idx, row in solutions_df.iterrows():
         val = row.get("L1PA_postop")
-        if val is not None:
-            status = "✓" if abs(val) <= 3 else "⚠"
-            l1pa_row[f"Sol {idx+1}"] = f"{val:.1f} {status}"
+        if val is not None and pi_val is not None:
+            ideal_l1pa = calculate_ideal_l1pa(pi_val)
+            diff = val - ideal_l1pa
+            status = "✓" if abs(diff) <= 3 else "⚠"
+            l1pa_row[f"Sol {idx+1}"] = f"{diff:.1f} {status}"
         else:
             l1pa_row[f"Sol {idx+1}"] = "-"
     rows.append(l1pa_row)
