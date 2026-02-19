@@ -251,12 +251,16 @@ def composite_score_calc(
     pi_preop: float,
     gap_category_postop: str,
     gap_category_preop: str,
+    mech_fail_prob: float = 0.0,
+    odi_postop: float = None,
     w1: float = 1,
     w2: float = 1,
     w3: float = 1,
     w4: float = 1,
     w5: float = 1,
-    w6: float = 1
+    w6: float = 1,
+    w_mech_fail: float = 0,
+    w_odi: float = 0
 ) -> float:
     """
     Compute composite score based on GAP score and quadratic penalties for constraint violations.
@@ -272,13 +276,15 @@ def composite_score_calc(
         pi_preop: Pelvic Incidence (preop, unchanged)
         gap_category_postop: GAP category after surgery ("P", "MD", "SD")
         gap_category_preop: GAP category before surgery
-        w1-w6: weights for each component
+        mech_fail_prob: predicted mechanical failure probability (0-1)
+        odi_postop: predicted postoperative ODI score (0-100 scale, optional)
+        w1-w6, w_mech_fail, w_odi: weights for each component
         
     Returns:
         Composite score (lower is better)
     """
     # Calculate relative weights
-    weights = [w1, w2, w3, w4, w5, w6]
+    weights = [w1, w2, w3, w4, w5, w6, w_mech_fail, w_odi]
     total_weight = sum(weights)
     rel_weights = [w / total_weight for w in weights]
     
@@ -320,6 +326,12 @@ def composite_score_calc(
     else:
         gap_improvement_pen = 100
     
+    # 6) Mechanical failure penalty (probability scaled to 0-100)
+    mech_fail_pen = mech_fail_prob * 100
+    
+    # 7) ODI postop penalty (already on 0-100 scale)
+    odi_pen = max(0, odi_postop) if odi_postop is not None else 0
+    
     # Composite score (weighted sum)
     composite = (
         rel_weights[0] * gap_normalized +
@@ -327,7 +339,9 @@ def composite_score_calc(
         rel_weights[2] * l4s1_pen +
         rel_weights[3] * t4l1pa_pen +
         rel_weights[4] * ll_pen +
-        rel_weights[5] * gap_improvement_pen
+        rel_weights[5] * gap_improvement_pen +
+        rel_weights[6] * mech_fail_pen +
+        rel_weights[7] * odi_pen
     )
     
     return composite
@@ -336,7 +350,9 @@ def composite_score_calc(
 def composite_score_from_predictions(
     patient_preop: dict,
     delta_predictions: dict,
-    weights: dict = None
+    weights: dict = None,
+    mech_fail_prob: float = 0.0,
+    odi_postop: float = None
 ) -> tuple:
     """
     Calculate composite score from patient preop data and predicted deltas.
@@ -350,13 +366,17 @@ def composite_score_from_predictions(
         delta_predictions: dict with keys:
             - delta_LL, delta_SS, delta_L4S1, delta_GlobalTilt
             - delta_T4PA, delta_L1PA
-        weights: optional dict with keys w1-w6
+        weights: optional dict with keys w1-w6, w_mech_fail, w_odi
+        mech_fail_prob: predicted mechanical failure probability (0-1)
+        odi_postop: predicted postoperative ODI score (0-100, optional)
             
     Returns:
         tuple: (composite_score, postop_values_dict, gap_info_dict)
     """
     if weights is None:
         weights = {f"w{i}": 1 for i in range(1, 7)}
+        weights["w_mech_fail"] = 0
+        weights["w_odi"] = 0
     
     # Calculate postop values
     ll_postop = patient_preop["LL_preop"] + delta_predictions["delta_LL"]
@@ -391,6 +411,8 @@ def composite_score_from_predictions(
         pi_preop=pi,
         gap_category_postop=gap_category,
         gap_category_preop=patient_preop["gap_category"],
+        mech_fail_prob=mech_fail_prob,
+        odi_postop=odi_postop,
         **weights
     )
     
