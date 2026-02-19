@@ -25,7 +25,7 @@ def calculate_ideal_ll(pi: float) -> float:
     
     Per GAP score reference: Ideal LL = PI x 0.62 + 29
     """
-    return pi * 0.62 + 29
+    return pi * 0.54 + 27.6
 
 
 def calculate_ideal_global_tilt(pi: float) -> float:

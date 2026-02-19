@@ -174,7 +174,7 @@ def display_actual_outcomes(patient_id, patient_fixed, data_path=None):
         ("LL", "LL_preop", "LL_postop"),
         ("SS", "SS_preop", "SS_postop"),
         ("L4S1", "L4S1_preop", "L4_S1_postop"),
-        ("GlobalTilt", "global_tilt", "global_tilt.1"),
+        ("GlobalTilt", "global_tilt_preop", "global_tilt_postop"),
         ("T4PA", "T4PA_preop", "T4PA_postop"),
         ("L1PA", "L1PA_preop", "L1PA_postop"),
     ]

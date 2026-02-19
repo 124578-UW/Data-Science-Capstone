@@ -35,6 +35,7 @@ L1PA_MODEL = ARTIFACTS_DIR / "L1PA" / "L1PA_rf_reg.joblib"
 SVA_MODEL = ARTIFACTS_DIR / "SVA" / "delta_SVA_model.joblib"
 SS_MODEL = ARTIFACTS_DIR / "SS" / "delta_SS_model.joblib"
 GLOBAL_TILT_MODEL = ARTIFACTS_DIR / "GlobalTilt" / "delta_GlobalTilt_model.joblib"
+ODI_MODEL = ARTIFACTS_DIR / "ODI" / "ODI_ridge_reg.joblib"
 
 # ============================================================================
 # DECISION VARIABLES

@@ -27,7 +27,7 @@ PATIENT_FIXED_COLS = [
     "HU_UIVplus2_preop",
     "gap_category",      # Preop GAP category for composite score
     "gap_score_preop",   # Preop GAP score
-    "global_tilt",       # Preop Global Tilt (used as GlobalTilt_preop)
+    "global_tilt_preop",       # Preop Global Tilt (used as GlobalTilt_preop)
 ]
 
 
@@ -78,8 +78,8 @@ def load_patient_data(index=None, patient_id=None, data_path=None):
             patient_fixed[col] = None
     
     # Rename global_tilt to GlobalTilt_preop for consistency with scoring module
-    if "global_tilt" in patient_fixed:
-        patient_fixed["GlobalTilt_preop"] = patient_fixed.pop("global_tilt")
+    if "global_tilt_preop" in patient_fixed:
+        patient_fixed["GlobalTilt_preop"] = patient_fixed.pop("global_tilt_preop")
     
     return patient_fixed
 
