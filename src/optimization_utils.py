@@ -5,30 +5,8 @@ import joblib
 from src import config
 
 
-# Columns needed for patient_fixed dict (preop values for optimization)
-PATIENT_FIXED_COLS = [
-    "age",
-    "sex",
-    "bmi",
-    "C7CSVL_preop",
-    "SVA_preop",
-    "T4PA_preop",
-    "L1PA_preop",
-    "LL_preop",
-    "L4S1_preop",
-    "PT_preop",
-    "PI_preop",
-    "SS_preop",
-    "cobb_main_curve_preop",
-    "FC_preop",
-    "tscore_femneck_preop",
-    "HU_UIV_preop",
-    "HU_UIVplus1_preop",
-    "HU_UIVplus2_preop",
-    "gap_category",      # Preop GAP category for composite score
-    "gap_score_preop",   # Preop GAP score
-    "global_tilt",       # Preop Global Tilt (used as GlobalTilt_preop)
-]
+# Columns needed for patient_fixed dict – single source of truth is config
+PATIENT_FIXED_COLS = config.PATIENT_FIXED_COLS
 
 
 def load_patient_data(index=None, patient_id=None, data_path=None):
@@ -77,9 +55,9 @@ def load_patient_data(index=None, patient_id=None, data_path=None):
             print(f"Warning: Column '{col}' not found in dataset")
             patient_fixed[col] = None
     
-    # Rename global_tilt to GlobalTilt_preop for consistency with scoring module
-    if "global_tilt" in patient_fixed:
-        patient_fixed["GlobalTilt_preop"] = patient_fixed.pop("global_tilt")
+    # Add GlobalTilt_preop alias for scoring module (keep original for model features)
+    if "global_tilt_preop" in patient_fixed:
+        patient_fixed["GlobalTilt_preop"] = patient_fixed["global_tilt_preop"]
     
     return patient_fixed
 
@@ -220,7 +198,13 @@ def predict_all_deltas(full_dict, delta_bundles):
     """
     deltas = {}
     for name, bundle in delta_bundles.items():
-        deltas[f"delta_{name}"] = predict_delta(full_dict, bundle)
+        try:
+            deltas[f"delta_{name}"] = predict_delta(full_dict, bundle)
+        except Exception as e:
+            raise ValueError(
+                f"Delta model '{name}' failed: {e}\n"
+                f"  Bundle features ({len(bundle['features'])}): {bundle['features']}"
+            ) from e
     return deltas
 
 
@@ -228,7 +212,7 @@ def predict_all_deltas(full_dict, delta_bundles):
 # Composite Score Fitness
 # ============================================================================
 
-def fitness_composite_score(x, patient_fixed, delta_bundles, weights=None):
+def fitness_composite_score(x, patient_fixed, delta_bundles, mech_fail_bundle=None, odi_bundle=None, weights=None):
     """
     Scalar fitness to MINIMIZE: composite score based on predicted outcomes.
     
@@ -236,7 +220,9 @@ def fitness_composite_score(x, patient_fixed, delta_bundles, weights=None):
         x: decision vector (ints)
         patient_fixed: dict with patient preop values
         delta_bundles: dict with delta model bundles (keys: L4S1, LL, T4PA, L1PA, SVA, SS, GlobalTilt)
-        weights: dict with keys w1-w6 for composite score weights (optional)
+        mech_fail_bundle: mechanical failure model bundle (optional, for w_mech_fail)
+        odi_bundle: ODI model bundle (optional, for w_odi)
+        weights: dict with keys w1-w6, w_mech_fail, w_odi for composite score weights (optional)
         
     Returns:
         float: composite score (lower is better)
@@ -276,16 +262,31 @@ def fitness_composite_score(x, patient_fixed, delta_bundles, weights=None):
     if weights is None:
         weights = {}
     
+    # Predict mechanical failure probability if bundle provided
+    mech_fail_prob = 0.0
+    if mech_fail_bundle is not None:
+        mech_fail_prob = predict_mech_fail_prob(full, mech_fail_bundle)
+    
+    # Predict ODI postop if bundle provided
+    odi_postop = None
+    if odi_bundle is not None:
+        delta_odi = predict_delta(full, odi_bundle)
+        odi_preop = patient_fixed.get("ODI_preop")
+        if odi_preop is not None:
+            odi_postop = odi_preop + delta_odi
+    
     composite, postop_values, gap_info = scoring.composite_score_from_predictions(
         patient_preop=patient_preop,
         delta_predictions=delta_predictions,
-        weights=weights
+        weights=weights,
+        mech_fail_prob=mech_fail_prob,
+        odi_postop=odi_postop
     )
     
     return composite
 
 
-def evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights=None):
+def evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights=None, odi_bundle=None):
     """
     Evaluate a solution and return detailed results including composite score,
     mechanical failure probability, predicted deltas, and GAP info.
@@ -296,6 +297,7 @@ def evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights
         delta_bundles: dict with delta model bundles
         mech_fail_bundle: mechanical failure model bundle
         weights: dict with keys w1-w6 for composite score weights (optional)
+        odi_bundle: ODI model bundle (optional, for w_odi)
         
     Returns:
         dict with plan, composite_score, mech_fail_prob, deltas, postop_values, gap_info
@@ -340,16 +342,51 @@ def evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights
     composite, postop_values, gap_info = scoring.composite_score_from_predictions(
         patient_preop=patient_preop,
         delta_predictions=delta_predictions,
-        weights=weights
+        weights=weights,
+        mech_fail_prob=mech_fail_prob,
+        odi_postop=None  # computed below if odi_bundle provided
     )
     
     # Add SVA postop if we have the delta prediction
     if "delta_SVA" in deltas and patient_fixed.get("SVA_preop") is not None:
         postop_values["SVA_postop"] = patient_fixed["SVA_preop"] + deltas["delta_SVA"]
     
+    # Predict ODI delta and postop if bundle provided
+    odi_postop = None
+    if odi_bundle is not None:
+        delta_odi = predict_delta(full, odi_bundle)
+        deltas["delta_ODI"] = delta_odi
+        odi_preop = patient_fixed.get("ODI_preop")
+        if odi_preop is not None:
+            odi_postop = odi_preop + delta_odi
+            postop_values["ODI_postop"] = odi_postop
+    
+    # Recompute composite with ODI if it's active
+    if odi_postop is not None and weights.get("w_odi", 0) > 0:
+        composite, _, _ = scoring.composite_score_from_predictions(
+            patient_preop=patient_preop,
+            delta_predictions=delta_predictions,
+            weights=weights,
+            mech_fail_prob=mech_fail_prob,
+            odi_postop=odi_postop
+        )
+    
+    # Also compute a display composite using equal weights on original 6 components only
+    equal_weights = {f"w{i}": 1/6 for i in range(1, 7)}
+    equal_weights["w_mech_fail"] = 0
+    equal_weights["w_odi"] = 0
+    display_composite, _, _ = scoring.composite_score_from_predictions(
+        patient_preop=patient_preop,
+        delta_predictions=delta_predictions,
+        weights=equal_weights,
+        mech_fail_prob=0.0,
+        odi_postop=None
+    )
+    
     return {
         "plan": plan,
         "composite_score": composite,
+        "display_composite_score": display_composite,
         "mech_fail_prob": mech_fail_prob,
         "deltas": deltas,
         "postop_values": postop_values,
