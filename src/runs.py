@@ -118,9 +118,9 @@ def run_optimization(
     """
     weights = preset["weights"]
 
-    # Only pass bundles if their weights are active
+    # Only pass bundles to optimizer if their weights are active
     mf_bundle = mech_fail_bundle if weights.get("w_mech_fail", 0) > 0 else None
-    odi_bun = odi_bundle if weights.get("w_odi", 0) > 0 else None
+    odi_bun_optim = odi_bundle if weights.get("w_odi", 0) > 0 else None
 
     problem = SpineProblem(
         patient_fixed=patient_fixed,
@@ -129,7 +129,7 @@ def run_optimization(
         xu=xu,
         weights=weights,
         mech_fail_bundle=mf_bundle,
-        odi_bundle=odi_bun,
+        odi_bundle=odi_bun_optim,
     )
 
     algorithm = GA(
@@ -151,7 +151,7 @@ def run_optimization(
 
     best_x = np.asarray(res.X).astype(int)
     best_result = ou.evaluate_solution(
-        best_x, patient_fixed, delta_bundles, mech_fail_bundle, weights=weights, odi_bundle=odi_bun
+        best_x, patient_fixed, delta_bundles, mech_fail_bundle, weights=weights, odi_bundle=odi_bundle
     )
 
     diverse_df = s.get_diverse_solutions(
@@ -164,7 +164,7 @@ def run_optimization(
         patient_fixed=patient_fixed,
         delta_bundles=delta_bundles,
         mech_fail_bundle=mech_fail_bundle,
-        odi_bundle=odi_bun,
+        odi_bundle=odi_bundle,
         weights=weights,
     )
 

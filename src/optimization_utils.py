@@ -351,15 +351,15 @@ def evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights
     if "delta_SVA" in deltas and patient_fixed.get("SVA_preop") is not None:
         postop_values["SVA_postop"] = patient_fixed["SVA_preop"] + deltas["delta_SVA"]
     
-    # Predict ODI postop if bundle provided
+    # Predict ODI delta and postop if bundle provided
     odi_postop = None
     if odi_bundle is not None:
         delta_odi = predict_delta(full, odi_bundle)
+        deltas["delta_ODI"] = delta_odi
         odi_preop = patient_fixed.get("ODI_preop")
         if odi_preop is not None:
             odi_postop = odi_preop + delta_odi
             postop_values["ODI_postop"] = odi_postop
-            deltas["delta_ODI"] = delta_odi
     
     # Recompute composite with ODI if it's active
     if odi_postop is not None and weights.get("w_odi", 0) > 0:
@@ -371,9 +371,22 @@ def evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights
             odi_postop=odi_postop
         )
     
+    # Also compute a display composite using equal weights on original 6 components only
+    equal_weights = {f"w{i}": 1/6 for i in range(1, 7)}
+    equal_weights["w_mech_fail"] = 0
+    equal_weights["w_odi"] = 0
+    display_composite, _, _ = scoring.composite_score_from_predictions(
+        patient_preop=patient_preop,
+        delta_predictions=delta_predictions,
+        weights=equal_weights,
+        mech_fail_prob=0.0,
+        odi_postop=None
+    )
+    
     return {
         "plan": plan,
         "composite_score": composite,
+        "display_composite_score": display_composite,
         "mech_fail_prob": mech_fail_prob,
         "deltas": deltas,
         "postop_values": postop_values,

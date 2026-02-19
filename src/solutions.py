@@ -107,7 +107,8 @@ def get_diverse_solutions(res,
             result = ou.evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights, odi_bundle=odi_bundle)
             
             eval_row = {col: row[col] for col in plan_cols}
-            eval_row["composite_score"] = round(result["composite_score"], 2)
+            eval_row["composite_score"] = round(result["display_composite_score"], 2)
+            eval_row["optimization_score"] = round(result["composite_score"], 2)
             eval_row["mech_fail_prob"] = f"{result['mech_fail_prob'] * 100:.1f}%"
             eval_row["gap_score"] = result["gap_info"]["gap_score"]
             eval_row["gap_category"] = result["gap_info"]["gap_category"]

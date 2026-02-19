@@ -21,8 +21,14 @@ def display_optimized_solution(result, patient_fixed):
     print("=" * 60)
     print("BEST SOLUTION SUMMARY (OPTIMIZED)")
     print("=" * 60)
-    print(f"\nComposite Score: {result['composite_score']:.4f} (lower is better)")
+    print(f"\nComposite Score: {result['display_composite_score']:.4f} (lower is better)")
+    print(f"Optimization Score: {result['composite_score']:.4f}")
     print(f"Mechanical Failure Probability: {result['mech_fail_prob'] * 100:.1f}%")
+    odi_postop = result['postop_values'].get('ODI_postop')
+    if odi_postop is not None:
+        print(f"Predicted ODI Score: {odi_postop:.1f}")
+    else:
+        print("Predicted ODI Score: N/A (no preop ODI)")
 
     print("\nSurgical Plan:")
     for k, v in result['plan'].items():
@@ -456,7 +462,13 @@ def display_multiple_solutions(solutions_df, patient_fixed, side_by_side=True):
         print(f"SOLUTION {idx + 1}")
         print("=" * 60)
         print(f"\nComposite Score: {row['composite_score']}")
+        print(f"Optimization Score: {row.get('optimization_score', '-')}")
         print(f"Mechanical Failure Probability: {row['mech_fail_prob']}")
+        odi_postop = row.get('ODI_postop')
+        if odi_postop is not None:
+            print(f"Predicted ODI Score: {odi_postop}")
+        else:
+            print("Predicted ODI Score: N/A (no preop ODI)")
         print(f"GAP Score: {row['gap_score']} ({row['gap_category']})")
         
         print("\nSurgical Plan:")
@@ -656,9 +668,22 @@ def _display_solutions_side_by_side(solutions_df, patient_fixed):
         summary_row[f"Sol {idx+1}"] = row["composite_score"]
     rows.append(summary_row)
     
+    if "optimization_score" in solutions_df.columns:
+        summary_row = {"Parameter": "Optimization Score"}
+        for idx, row in solutions_df.iterrows():
+            summary_row[f"Sol {idx+1}"] = row.get("optimization_score", "-")
+        rows.append(summary_row)
+    
     summary_row = {"Parameter": "Mech Fail Prob"}
     for idx, row in solutions_df.iterrows():
         summary_row[f"Sol {idx+1}"] = row["mech_fail_prob"]
+    rows.append(summary_row)
+    
+    # ODI postop (always show)
+    summary_row = {"Parameter": "Predicted ODI"}
+    for idx, row in solutions_df.iterrows():
+        odi_val = row.get("ODI_postop") if "ODI_postop" in solutions_df.columns else None
+        summary_row[f"Sol {idx+1}"] = odi_val if odi_val is not None else "N/A (no preop ODI)"
     rows.append(summary_row)
     
     # GAP Score: show preop → postop (include categories)
