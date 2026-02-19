@@ -28,6 +28,14 @@ def calculate_ideal_ll(pi: float) -> float:
     return pi * 0.54 + 27.6
 
 
+def calculate_ideal_l1pa(pi: float) -> float:
+    """Calculate ideal L1PA from Pelvic Incidence.
+    
+    Ideal L1PA = PI x 0.5 - 21
+    """
+    return pi * 0.5 - 21
+
+
 def calculate_ideal_global_tilt(pi: float) -> float:
     """Calculate ideal Global Tilt from Pelvic Incidence."""
     return pi * 0.48 - 15
@@ -395,8 +403,9 @@ def composite_score_from_predictions(
     )
     
     # Calculate ideal mismatches for L1PA and T4L1PA
-    # L1PA ideal is typically 0 (aligned with vertical)
-    l1pa_ideal_mismatch = l1pa_postop  # ideal L1PA = 0
+    # L1PA ideal = 0.5 * PI - 21
+    ideal_l1pa = calculate_ideal_l1pa(pi)
+    l1pa_ideal_mismatch = l1pa_postop - ideal_l1pa
     
     # T4L1PA ideal mismatch (difference between T4PA and L1PA should be small)
     t4l1pa_ideal_mismatch = t4pa_postop - l1pa_postop
