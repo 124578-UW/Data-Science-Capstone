@@ -13,6 +13,7 @@ def get_diverse_solutions(res,
                           patient_fixed=None,
                           delta_bundles=None,
                           mech_fail_bundle=None,
+                          odi_bundle=None,
                           weights=None):
     """
     Extract diverse solutions from optimization history.
@@ -27,6 +28,7 @@ def get_diverse_solutions(res,
         patient_fixed: patient preop data (optional, for full evaluation)
         delta_bundles: delta model bundles (optional, for full evaluation)
         mech_fail_bundle: mech fail model bundle (optional, for full evaluation)
+        odi_bundle: ODI model bundle (optional, for full evaluation)
         weights: composite score weights (optional, for full evaluation)
         
     Returns:
@@ -102,7 +104,7 @@ def get_diverse_solutions(res,
         eval_rows = []
         for _, row in selected.iterrows():
             x = row["x"]
-            result = ou.evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights)
+            result = ou.evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights, odi_bundle=odi_bundle)
             
             eval_row = {col: row[col] for col in plan_cols}
             eval_row["composite_score"] = round(result["composite_score"], 2)

@@ -151,6 +151,7 @@ PATIENT_FIXED_COLS = [
     "CCI",
     "ASA_CLASS",
     "revision",             # Revision indicator (interbody > 0 but no ALIF/XLIF/TLIF)
+    "ODI_preop",            # Preop ODI score for postop ODI prediction
 ]
 # ============================================================================
 # TARGETS
