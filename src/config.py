@@ -18,6 +18,9 @@ DATA_RAW = PROJECT_ROOT / "data" / "raw" / "MSDS_cleaned_with_CCI_ODI.xlsx"
 # Processed/cleaned data (output from 00_data_cleaning.ipynb)
 DATA_PROCESSED = PROJECT_ROOT / "data" / "processed" / "cleaned_for_modeling.csv"
 
+# Holdout test patients (excluded from training)
+DATA_HOLDOUT = PROJECT_ROOT / "data" / "processed" / "holdout_patients.csv"
+
 # ============================================================================
 # MODEL ARTIFACTS
 # ============================================================================
@@ -35,6 +38,8 @@ L1PA_MODEL = ARTIFACTS_DIR / "L1PA" / "L1PA_rf_reg.joblib"
 SVA_MODEL = ARTIFACTS_DIR / "SVA" / "delta_SVA_model.joblib"
 SS_MODEL = ARTIFACTS_DIR / "SS" / "delta_SS_model.joblib"
 GLOBAL_TILT_MODEL = ARTIFACTS_DIR / "GlobalTilt" / "delta_GlobalTilt_model.joblib"
+
+# ODI Change model
 ODI_MODEL = ARTIFACTS_DIR / "ODI" / "ODI_ridge_reg.joblib"
 
 # ============================================================================
@@ -144,7 +149,8 @@ PATIENT_FIXED_COLS = [
     "gap_score_preop",   # Preop GAP score
     "global_tilt_preop", # Preop Global Tilt (used as GlobalTilt_preop)
     "CCI",
-    "ASA_CLASS"             
+    "ASA_CLASS",
+    "revision",             # Revision indicator (interbody > 0 but no ALIF/XLIF/TLIF)
 ]
 # ============================================================================
 # TARGETS

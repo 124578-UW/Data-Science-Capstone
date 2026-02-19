@@ -13,6 +13,7 @@ class SpineProblem(ElementwiseProblem):
     
     Constraints:
         - If num_interbody_fusion_levels > 0, at least one of ALIF, XLIF, or TLIF must be 1
+        - If ALIF=1 and XLIF=0 and TLIF=0, num_interbody_fusion_levels must be < 4
     
     Args:
         patient_fixed: dict with patient preoperative values
@@ -26,7 +27,7 @@ class SpineProblem(ElementwiseProblem):
         super().__init__(
             n_var=len(xl),
             n_obj=1,
-            n_ieq_constr=1,
+            n_ieq_constr=2,
             xl=xl,
             xu=xu,
             vtype=int,
@@ -43,9 +44,12 @@ class SpineProblem(ElementwiseProblem):
         xlif = x[4]
         tlif = x[5]
         
-        # Constraint: if num_interbody > 0, need ALIF + XLIF + TLIF >= 1
+        # Constraint 1: if num_interbody > 0, need ALIF + XLIF + TLIF >= 1
         # g <= 0 is feasible; g > 0 is infeasible
-        g = num_interbody * (1 - (alif + xlif + tlif))
+        g1 = num_interbody * (1 - (alif + xlif + tlif))
+        
+        # Constraint 2: if ALIF-only (no XLIF/TLIF), num_interbody must be < 4
+        g2 = alif * (1 - xlif) * (1 - tlif) * (num_interbody - 3)
         
         # Fitness: composite score (lower = better)
         f = ou.fitness_composite_score(
@@ -56,4 +60,4 @@ class SpineProblem(ElementwiseProblem):
         )
         
         out["F"] = [f]
-        out["G"] = [g]
+        out["G"] = [g1, g2]
