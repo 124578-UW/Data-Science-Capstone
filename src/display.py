@@ -232,7 +232,7 @@ def display_actual_outcomes(patient_id, patient_fixed, data_path=None):
     # Actual surgical plan columns (map display name to data column name)
     actual_plan_cols = [
         ("UIV_implant", "UIV_implant"),
-        ("num_levels_cat", "updated_num_levels"),  # Column is named differently in data
+        ("num_levels_cat", "num_levels_cat"),
         ("num_interbody_fusion_levels", "num_interbody_fusion_levels"),
         ("ALIF", "ALIF"),
         ("XLIF", "XLIF"),
@@ -248,6 +248,17 @@ def display_actual_outcomes(patient_id, patient_fixed, data_path=None):
     for display_name, col in actual_plan_cols:
         if col in patient_row.index:
             print(f"  {display_name}: {patient_row[col]}")
+
+    # Show key outcomes
+    mech_fail = patient_row.get("mech_fail_last")
+    if mech_fail is not None and pd.notna(mech_fail):
+        print(f"\n  Mechanical Failure: {'Yes' if mech_fail else 'No'}")
+
+    odi_pre = patient_row.get("ODI_preop")
+    odi_post = patient_row.get("ODI_12mo")
+    odi_pre_str = f"{round(odi_pre, 1)}" if odi_pre is not None and pd.notna(odi_pre) else "N/A"
+    odi_post_str = f"{round(odi_post, 1)}" if odi_post is not None and pd.notna(odi_post) else "N/A"
+    print(f"  ODI: {odi_pre_str} (preop) → {odi_post_str} (12mo)")
 
     # Build comparison table with actual postop values
     # Format: (display_name, preop_col_in_data, postop_col_in_data)
