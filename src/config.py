@@ -141,7 +141,7 @@ PATIENT_FIXED_COLS = [
     "HU_UIVplus2_preop",
     "gap_category",      # Preop GAP category for composite score
     "gap_score_preop",   # Preop GAP score
-    "global_tilt",       # Preop Global Tilt (used as GlobalTilt_preop)
+    "global_tilt_preop", # Preop Global Tilt (used as GlobalTilt_preop)
     "CCI",
     "ASA_CLASS"             
     #"smoking"           #add to mechanical failure model only
