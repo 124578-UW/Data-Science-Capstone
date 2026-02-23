@@ -163,7 +163,7 @@ MECH_FAIL_TARGET = "mech_fail_last"
 # ============================================================================
 
 # Mechanical failure uses smoking additionally
-PREDICTORS = PATIENT_FIXED_COLS.remove
+
 MECH_FAIL_FEATURES = PATIENT_FIXED_COLS + PLAN_COLS + ["smoking"]
 MECH_FAIL_FEATURES.remove("revision")
 
