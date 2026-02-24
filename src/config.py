@@ -31,16 +31,16 @@ ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 MECH_FAIL_MODEL = ARTIFACTS_DIR / "MechanicalFailure" / "mech_fail_logreg.joblib"
 
 # Parameter change models
-L4S1_MODEL = ARTIFACTS_DIR / "L4S1" / "L4S1_ridge_reg.joblib"
-LL_MODEL = ARTIFACTS_DIR / "LL" / "LL_ridge_reg.joblib"
-T4PA_MODEL = ARTIFACTS_DIR / "T4PA" / "T4PA_ridge_reg.joblib"
-L1PA_MODEL = ARTIFACTS_DIR / "L1PA" / "L1PA_rf_reg.joblib"
+L4S1_MODEL = ARTIFACTS_DIR / "L4S1" / "delta_L4S1_model.joblib"
+LL_MODEL = ARTIFACTS_DIR / "LL" / "delta_LL_model.joblib"
+T4PA_MODEL = ARTIFACTS_DIR / "T4PA" / "delta_T4PA_model.joblib"
+L1PA_MODEL = ARTIFACTS_DIR / "L1PA" / "delta_L1PA_model.joblib"
 SVA_MODEL = ARTIFACTS_DIR / "SVA" / "delta_SVA_model.joblib"
 SS_MODEL = ARTIFACTS_DIR / "SS" / "delta_SS_model.joblib"
 GLOBAL_TILT_MODEL = ARTIFACTS_DIR / "GlobalTilt" / "delta_GlobalTilt_model.joblib"
 
 # ODI Change model
-ODI_MODEL = ARTIFACTS_DIR / "ODI" / "ODI_ridge_reg.joblib"
+ODI_MODEL = ARTIFACTS_DIR / "ODI" / "delta_ODI_model.joblib"
 
 # ============================================================================
 # DECISION VARIABLES
@@ -163,7 +163,12 @@ MECH_FAIL_TARGET = "mech_fail_last"
 # ============================================================================
 
 # Mechanical failure uses smoking additionally
+
 MECH_FAIL_FEATURES = PATIENT_FIXED_COLS + PLAN_COLS + ["smoking"]
+MECH_FAIL_FEATURES.remove("revision")
 
 # Delta models do NOT use smoking
 DELTA_MODEL_FEATURES = PATIENT_FIXED_COLS + PLAN_COLS
+DELTA_MODEL_FEATURES.remove("revision")
+
+
