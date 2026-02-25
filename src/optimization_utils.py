@@ -126,7 +126,7 @@ def decode_plan(x, uiv_choices=None):
         x: decision vector (ints)
         uiv_choices: deprecated, kept for backwards compatibility (uses config instead)
     """
-    x = np.asarray(x).astype(int)
+    x = np.rint(np.asarray(x, dtype=float)).astype(int)
     
     plan = {}
     for i, var_spec in enumerate(config.DECISION_VAR_SPECS):

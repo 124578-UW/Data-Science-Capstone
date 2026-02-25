@@ -38,13 +38,19 @@ def get_diverse_solutions(res,
 
     for gen, algo in enumerate(res.history):
         pop = algo.pop
-        Xg = np.asarray(pop.get("X")).astype(int)
+        # Use np.rint (round-to-nearest) to match pymoo's integer rounding.
+        # .astype(int) truncates, causing mismatches (e.g. 0.93 → 0 instead of 1).
+        Xg = np.rint(pop.get("X")).astype(int)
         Fg = pop.get("F").flatten()
+        Gg = pop.get("G")  # constraint values: g <= 0 is feasible
 
         order = np.argsort(Fg)
         take = min(top_per_gen, len(order))
 
         for idx in order[:take]:
+            # Skip infeasible solutions (any constraint > 0)
+            if Gg is not None and np.any(Gg[idx] > 0):
+                continue
             plan = ou.decode_plan(Xg[idx])
             rows.append({**plan, "fitness": float(Fg[idx]), "gen": gen, "x": Xg[idx]})
 

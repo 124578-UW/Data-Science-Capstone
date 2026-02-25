@@ -5,6 +5,11 @@ Display utilities for optimization results.
 import pandas as pd
 from src import config
 
+# Display-name overrides for plan columns
+_PLAN_COL_DISPLAY = {
+    "osteotomy": "osteotomy (PSO)",
+}
+
 
 def display_optimized_solution(result, patient_fixed):
     """
@@ -32,7 +37,8 @@ def display_optimized_solution(result, patient_fixed):
 
     print("\nSurgical Plan:")
     for k, v in result['plan'].items():
-        print(f"  {k}: {v}")
+        label = _PLAN_COL_DISPLAY.get(k, k)
+        print(f"  {label}: {v}")
 
     # Build comparison table for alignment parameters
     alignment_params = ["LL", "SS", "L4S1", "GlobalTilt", "T4PA", "L1PA"]
@@ -215,7 +221,9 @@ def display_optimized_solution(result, patient_fixed):
     return pd.DataFrame(table_data)
 
 
-def display_actual_outcomes(patient_id, patient_fixed, data_path=None):
+def display_actual_outcomes(patient_id, patient_fixed, data_path=None,
+                            delta_bundles=None, mech_fail_bundle=None,
+                            odi_bundle=None, presets=None):
     """
     Display the actual surgical plan and outcomes for a patient.
     
@@ -223,6 +231,10 @@ def display_actual_outcomes(patient_id, patient_fixed, data_path=None):
         patient_id: Patient ID to look up
         patient_fixed: Dictionary of patient preop parameters (for reference)
         data_path: Path to processed data CSV (defaults to config.DATA_PROCESSED)
+        delta_bundles: dict of delta model bundles (optional, for scoring)
+        mech_fail_bundle: mechanical failure model bundle (optional, for scoring)
+        odi_bundle: ODI model bundle (optional, for scoring)
+        presets: dict of scenario presets from runs.PRESETS (optional, for scoring)
         
     Returns:
         pd.DataFrame: Comparison table of actual alignment parameters
@@ -243,7 +255,7 @@ def display_actual_outcomes(patient_id, patient_fixed, data_path=None):
         ("TLIF", "TLIF"),
         ("num_rods", "num_rods"),
         ("num_pelvic_screws", "num_pelvic_screws"),
-        ("osteotomy", "osteotomy"),
+        ("osteotomy (PSO)", "osteotomy"),
     ]
 
     print("=" * 60)
@@ -448,10 +460,88 @@ def display_actual_outcomes(patient_id, patient_fixed, data_path=None):
             "Postop (actual)": f"{gap_cat_post} {post_s}",
         })
 
+    # ── Score actual plan through models if bundles provided ──
+    if delta_bundles is not None and mech_fail_bundle is not None and presets is not None:
+        import src.optimization_utils as ou
+        from src import scoring
+
+        # Build the actual plan dict from data columns
+        actual_plan = {}
+        for var_spec in config.DECISION_VAR_SPECS:
+            col = var_spec["col_name"]
+            val = patient_row.get(col)
+            if val is not None and pd.notna(val):
+                actual_plan[col] = int(val) if not isinstance(val, str) else val
+        
+        full_input = ou.build_full_input(patient_fixed, actual_plan)
+
+        # Predict mech failure
+        mech_prob = ou.predict_mech_fail_prob(full_input, mech_fail_bundle)
+
+        # Predict all deltas
+        deltas = ou.predict_all_deltas(full_input, delta_bundles)
+
+        # Build preop dict for scoring
+        patient_preop = {
+            "PI_preop": patient_fixed.get("PI_preop"),
+            "LL_preop": patient_fixed.get("LL_preop"),
+            "SS_preop": patient_fixed.get("SS_preop"),
+            "L4S1_preop": patient_fixed.get("L4S1_preop"),
+            "GlobalTilt_preop": patient_fixed.get("GlobalTilt_preop"),
+            "T4PA_preop": patient_fixed.get("T4PA_preop"),
+            "L1PA_preop": patient_fixed.get("L1PA_preop"),
+            "age": patient_fixed.get("age"),
+            "gap_category": patient_fixed.get("gap_category"),
+        }
+        delta_predictions = {
+            "delta_LL": deltas.get("delta_LL", 0),
+            "delta_SS": deltas.get("delta_SS", 0),
+            "delta_L4S1": deltas.get("delta_L4S1", 0),
+            "delta_GlobalTilt": deltas.get("delta_GlobalTilt", 0),
+            "delta_T4PA": deltas.get("delta_T4PA", 0),
+            "delta_L1PA": deltas.get("delta_L1PA", 0),
+        }
+
+        # Predict ODI if bundle provided
+        odi_postop = None
+        if odi_bundle is not None:
+            delta_odi = ou.predict_delta(full_input, odi_bundle)
+            odi_preop = patient_fixed.get("ODI_preop")
+            if odi_preop is not None:
+                odi_postop = odi_preop + delta_odi
+
+        print("\n" + "=" * 60)
+        print("MODEL SCORES FOR ACTUAL PLAN")
+        print("=" * 60)
+        print(f"  Mech Failure Prob (predicted): {mech_prob * 100:.1f}%")
+        if odi_postop is not None:
+            print(f"  Predicted ODI (postop):        {odi_postop:.1f}")
+
+        print("\n  Scenario Scores (lower is better):")
+        # Pre-compute scores for alignment
+        score_lines = []
+        for key, preset in presets.items():
+            weights = preset["weights"]
+            score, _, _ = scoring.composite_score_from_predictions(
+                patient_preop=patient_preop,
+                delta_predictions=delta_predictions,
+                weights=weights,
+                mech_fail_prob=mech_prob,
+                odi_postop=odi_postop,
+            )
+            score_lines.append((key, preset["label"], score))
+
+        max_key_len = max(len(k) for k, _, _ in score_lines)
+        max_label_len = max(len(l) for _, l, _ in score_lines)
+        for key, label, score in score_lines:
+            padded_key = f"[{key}]".ljust(max_key_len + 3)
+            padded_label = label.ljust(max_label_len)
+            print(f"    {padded_key} {padded_label}  {score:>6.2f}")
+
     print("\n" + "=" * 60)
     print("ALIGNMENT PARAMETERS: PREOP → POSTOP (ACTUAL)")
     print("=" * 60)
-    
+
     return pd.DataFrame(table_actual)
 
 
@@ -493,7 +583,8 @@ def display_multiple_solutions(solutions_df, patient_fixed, side_by_side=True):
         print("\nSurgical Plan:")
         for col in config.PLAN_COLS:
             if col in row.index:
-                print(f"  {col}: {row[col]}")
+                label = _PLAN_COL_DISPLAY.get(col, col)
+                print(f"  {label}: {row[col]}")
         
         # Build alignment table from precomputed postop values
         alignment_params = ["LL", "SS", "L4S1", "GlobalTilt", "T4PA", "L1PA"]
@@ -725,7 +816,7 @@ def _display_solutions_side_by_side(solutions_df, patient_fixed):
     # Surgical plan rows
     rows.append({"Parameter": "SURGICAL PLAN", **{f"Sol {idx+1}": "" for idx in range(len(solutions_df))}})
     for col in config.PLAN_COLS:
-        plan_row = {"Parameter": col}
+        plan_row = {"Parameter": _PLAN_COL_DISPLAY.get(col, col)}
         for idx, row in solutions_df.iterrows():
             plan_row[f"Sol {idx+1}"] = row.get(col, "-")
         rows.append(plan_row)

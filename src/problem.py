@@ -13,7 +13,6 @@ class SpineProblem(ElementwiseProblem):
     
     Constraints:
         - If num_interbody_fusion_levels > 0, at least one of ALIF, XLIF, or TLIF must be 1
-          (disabled for revision patients, who may retain fusions from prior surgery)
         - If ALIF=1 and XLIF=0 and TLIF=0, num_interbody_fusion_levels must be < 4
     
     Args:
@@ -51,11 +50,7 @@ class SpineProblem(ElementwiseProblem):
         
         # Constraint 1: if num_interbody > 0, need ALIF + XLIF + TLIF >= 1
         # g <= 0 is feasible; g > 0 is infeasible
-        # Disabled for revision patients (prior fusions may already exist)
-        if self.patient_fixed.get("revision", 0) == 1:
-            g1 = 0  # always feasible
-        else:
-            g1 = num_interbody * (1 - (alif + xlif + tlif))
+        g1 = num_interbody * (1 - (alif + xlif + tlif))
         
         # Constraint 2: if ALIF-only (no XLIF/TLIF), num_interbody must be < 4
         g2 = alif * (1 - xlif) * (1 - tlif) * (num_interbody - 3)
