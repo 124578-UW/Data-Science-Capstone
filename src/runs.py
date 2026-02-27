@@ -19,33 +19,48 @@ from src.problem import SpineProblem
 PRESETS = {
     "equal": {
         "label": "Equal Weights (Composite)",
-        "description": "All 6 alignment components weighted equally",
-        "weights": {"w1": 1/6, "w2": 1/6, "w3": 1/6, "w4": 1/6, "w5": 1/6, "w6": 1/6, "w_mech_fail": 0},
+        "description": "All 6 alignment components and mechanical failure weighted equally",
+        "weights": {"w1": 1/7, "w2": 1/7, "w3": 1/7, "w4": 1/7, "w5": 1/7, "w6": 1/7, "w_mech_fail": 1/7},
     },
     "mech_fail": {
         "label": "Minimize Mechanical Failure",
-        "description": "Optimize solely for lowest mechanical failure probability",
-        "weights": {"w1": 0, "w2": 0, "w3": 0, "w4": 0, "w5": 0, "w6": 0, "w_mech_fail": 1},
+        "description": "Primarily mechanical failure probability, with small alignment weights",
+        "weights": {"w1": 0.05, "w2": 0.05, "w3": 0.05, "w4": 0.05, "w5": 0.05, "w6": 0.05, "w_mech_fail": 0.7},
+    },
+    "mech_fail_t4l1pa": {
+        "label": "Minimize Mechanical Failure + T4L1PA",
+        "description": "Mechanical failure probability and T4PA-L1PA mismatch weighted equally",
+        "weights": {"w1": 0, "w2": 0, "w3": 0, "w4": 0.5, "w5": 0, "w6": 0, "w_mech_fail": 0.5},
     },
     "l4s1": {
         "label": "Minimize L4S1 Penalty",
-        "description": "Optimize solely for L4-S1 in ideal range (35-45°)",
-        "weights": {"w1": 0, "w2": 0, "w3": 1, "w4": 0, "w5": 0, "w6": 0, "w_mech_fail": 0},
+        "description": "Primarily L4-S1 in ideal range (35-45°), with mech failure guard",
+        "weights": {"w1": 0, "w2": 0, "w3": 0.8, "w4": 0, "w5": 0, "w6": 0, "w_mech_fail": 0.2},
     },
     "t4l1pa": {
         "label": "Minimize T4L1PA Penalty",
-        "description": "Optimize solely for T4PA-L1PA mismatch",
-        "weights": {"w1": 0, "w2": 0, "w3": 0, "w4": 1, "w5": 0, "w6": 0, "w_mech_fail": 0},
+        "description": "Primarily T4PA-L1PA mismatch, with mech failure guard",
+        "weights": {"w1": 0, "w2": 0, "w3": 0, "w4": 0.8, "w5": 0, "w6": 0, "w_mech_fail": 0.2},
     },
     "equal_plus_mech": {
-        "label": "Equal Weights + Mechanical Failure",
-        "description": "Composite score (equal weights) blended 50/50 with mechanical failure",
-        "weights": {"w1": 1/6, "w2": 1/6, "w3": 1/6, "w4": 1/6, "w5": 1/6, "w6": 1/6, "w_mech_fail": 1, "w_odi": 0},
+        "label": "Equal Alignment + Mechanical Failure",
+        "description": "All 6 alignment components weighted equally, blended 50/50 with mechanical failure",
+        "weights": {"w1": 1/12, "w2": 1/12, "w3": 1/12, "w4": 1/12, "w5": 1/12, "w6": 1/12, "w_mech_fail": 0.5},
     },
     "odi": {
         "label": "Minimize Postop ODI",
-        "description": "Optimize solely for lowest predicted postoperative ODI score",
-        "weights": {"w1": 0, "w2": 0, "w3": 0, "w4": 0, "w5": 0, "w6": 0, "w_mech_fail": 0, "w_odi": 1},
+        "description": "Primarily lowest predicted postoperative ODI, with mech failure guard",
+        "weights": {"w1": 0, "w2": 0, "w3": 0, "w4": 0, "w5": 0, "w6": 0, "w_mech_fail": 0.2, "w_odi": 0.8},
+    },
+    "gap_score": {
+        "label": "Minimize GAP Score",
+        "description": "Primarily overall GAP alignment score and category improvement, with mech failure guard",
+        "weights": {"w1": 0.5, "w2": 0, "w3": 0, "w4": 0, "w5": 0, "w6": 0.3, "w_mech_fail": 0.2},
+    },
+    "ll": {
+        "label": "Minimize LL (PI-LL) Penalty",
+        "description": "Primarily PI-LL mismatch, with mech failure guard",
+        "weights": {"w1": 0, "w2": 0, "w3": 0, "w4": 0, "w5": 0.8, "w6": 0, "w_mech_fail": 0.2},
     },
 }
 
