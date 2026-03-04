@@ -26,8 +26,8 @@ def display_optimized_solution(result, patient_fixed):
     print("=" * 60)
     print("BEST SOLUTION SUMMARY (OPTIMIZED)")
     print("=" * 60)
-    print(f"\nComposite Score: {result['display_composite_score']:.4f} (lower is better)")
-    print(f"Optimization Score: {result['composite_score']:.4f}")
+    print(f"\nAlignment Score: {result['display_composite_score']:.1f} (lower is better)")
+    print(f"Optimization Score: {result['composite_score']:.1f}")
     print(f"Mechanical Failure Probability: {result['mech_fail_prob'] * 100:.1f}%")
     odi_postop = result['postop_values'].get('ODI_postop')
     if odi_postop is not None:
@@ -570,7 +570,7 @@ def display_multiple_solutions(solutions_df, patient_fixed, side_by_side=True):
         print("\n" + "=" * 60)
         print(f"SOLUTION {idx + 1}")
         print("=" * 60)
-        print(f"\nComposite Score: {row['composite_score']}")
+        print(f"\nAlignment Score: {row['composite_score']:.1f}")
         print(f"Optimization Score: {row.get('optimization_score', '-')}")
         print(f"Mechanical Failure Probability: {row['mech_fail_prob']}")
         odi_postop = row.get('ODI_postop')
@@ -775,29 +775,34 @@ def _display_solutions_side_by_side(solutions_df, patient_fixed):
     
     # Build combined table
     rows = []
+
+    # Helper to format a float to 1 decimal as string
+    def _f1(v):
+        return f"{v:.1f}" if isinstance(v, (int, float)) else str(v)
     
     # Header rows: summary info for each solution
-    summary_row = {"Parameter": "Composite Score"}
+    summary_row = {"Parameter": "Alignment Score"}
     for idx, row in solutions_df.iterrows():
-        summary_row[f"Sol {idx+1}"] = row["composite_score"]
+        summary_row[f"Sol {idx+1}"] = _f1(row["composite_score"])
     rows.append(summary_row)
     
     if "optimization_score" in solutions_df.columns:
         summary_row = {"Parameter": "Optimization Score"}
         for idx, row in solutions_df.iterrows():
-            summary_row[f"Sol {idx+1}"] = row.get("optimization_score", "-")
+            v = row.get("optimization_score", "-")
+            summary_row[f"Sol {idx+1}"] = _f1(v) if isinstance(v, (int, float)) else v
         rows.append(summary_row)
     
     summary_row = {"Parameter": "Mech Fail Prob"}
     for idx, row in solutions_df.iterrows():
-        summary_row[f"Sol {idx+1}"] = row["mech_fail_prob"]
+        summary_row[f"Sol {idx+1}"] = row["mech_fail_prob"]  # already formatted as "X.X%"
     rows.append(summary_row)
     
     # ODI postop (always show)
     summary_row = {"Parameter": "Predicted ODI"}
     for idx, row in solutions_df.iterrows():
         odi_val = row.get("ODI_postop") if "ODI_postop" in solutions_df.columns else None
-        summary_row[f"Sol {idx+1}"] = odi_val if odi_val is not None else "N/A (no preop ODI)"
+        summary_row[f"Sol {idx+1}"] = _f1(odi_val) if odi_val is not None else "N/A (no preop ODI)"
     rows.append(summary_row)
     
     # GAP Score: show preop → postop (include categories)
@@ -832,14 +837,14 @@ def _display_solutions_side_by_side(solutions_df, patient_fixed):
         param_row = {"Parameter": param}
         for idx, row in solutions_df.iterrows():
             val = row.get(postop_key)
-            param_row[f"Sol {idx+1}"] = round(val, 1) if val is not None else "-"
+            param_row[f"Sol {idx+1}"] = _f1(val) if val is not None else "-"
         rows.append(param_row)
     
     # Add PI (unchanged)
     if pi_val is not None:
         pi_row = {"Parameter": "PI"}
         for idx in range(len(solutions_df)):
-            pi_row[f"Sol {idx+1}"] = round(pi_val, 1)
+            pi_row[f"Sol {idx+1}"] = _f1(pi_val)
         rows.append(pi_row)
     
     # Add PT (calculated)
@@ -849,7 +854,7 @@ def _display_solutions_side_by_side(solutions_df, patient_fixed):
         for idx, row in solutions_df.iterrows():
             ss_postop = row.get("SS_postop")
             if ss_postop is not None:
-                pt_row[f"Sol {idx+1}"] = round(pi_val - ss_postop, 1)
+                pt_row[f"Sol {idx+1}"] = _f1(pi_val - ss_postop)
             else:
                 pt_row[f"Sol {idx+1}"] = "-"
         rows.append(pt_row)
@@ -939,4 +944,195 @@ def _display_solutions_side_by_side(solutions_df, patient_fixed):
     print("=" * 60)
     
     display(df_combined)
+    return df_combined
+
+
+def display_solutions_with_actual(solutions_df, patient_fixed, actual_result):
+    """
+    Display optimized solutions side by side with the actual plan highlighted
+    in the first column (light yellow background).
+
+    Args:
+        solutions_df: DataFrame from get_diverse_solutions() with postop values
+        patient_fixed: Dictionary of patient preop parameters
+        actual_result: dict from ou.evaluate_solution() for the actual surgical plan
+
+    Returns:
+        DataFrame with combined table (unstyled)
+    """
+    from src import config
+    from src.scoring import calculate_ideal_l1pa, calculate_ideal_ll
+    from IPython.display import display as ipy_display
+
+    alignment_params = ["LL", "SS", "L4S1", "GlobalTilt", "T4PA", "L1PA", "SVA"]
+    pi_val = patient_fixed.get("PI_preop")
+
+    col_actual = "Actual"
+    sol_cols = [f"Sol {idx+1}" for idx in range(len(solutions_df))]
+    all_cols = [col_actual] + sol_cols
+
+    rows = []
+
+    # Helper to format a float to 1 decimal as string
+    def _f1(v):
+        return f"{v:.1f}" if isinstance(v, (int, float)) else str(v)
+
+    # ── Summary rows ──
+    row = {"Parameter": "Alignment Score", col_actual: _f1(actual_result["display_composite_score"])}
+    for idx, r in solutions_df.iterrows():
+        row[f"Sol {idx+1}"] = _f1(r["composite_score"])
+    rows.append(row)
+
+    if "optimization_score" in solutions_df.columns:
+        row = {"Parameter": "Optimization Score", col_actual: _f1(actual_result["composite_score"])}
+        for idx, r in solutions_df.iterrows():
+            v = r.get("optimization_score", "-")
+            row[f"Sol {idx+1}"] = _f1(v) if isinstance(v, (int, float)) else v
+        rows.append(row)
+
+    row = {"Parameter": "Mech Fail Prob", col_actual: f"{actual_result['mech_fail_prob']*100:.1f}%"}
+    for idx, r in solutions_df.iterrows():
+        row[f"Sol {idx+1}"] = r["mech_fail_prob"]  # already formatted as "X.X%"
+    rows.append(row)
+
+    actual_odi = actual_result.get("postop_values", {}).get("ODI_postop")
+    row = {"Parameter": "Predicted ODI", col_actual: _f1(actual_odi) if actual_odi is not None else "N/A"}
+    for idx, r in solutions_df.iterrows():
+        val = r.get("ODI_postop") if "ODI_postop" in solutions_df.columns else None
+        row[f"Sol {idx+1}"] = _f1(val) if val is not None else "N/A"
+    rows.append(row)
+
+    gap_score_pre = patient_fixed.get("gap_score_preop", "-")
+    gap_cat_pre = patient_fixed.get("gap_category", "-")
+    a_gap = actual_result["gap_info"]
+    row = {"Parameter": "GAP Score", col_actual: f"{gap_score_pre} ({gap_cat_pre}) → {a_gap['gap_score']} ({a_gap['gap_category']})"}
+    for idx, r in solutions_df.iterrows():
+        row[f"Sol {idx+1}"] = f"{gap_score_pre} ({gap_cat_pre}) → {r.get('gap_score','-')} ({r.get('gap_category','-')})"
+    rows.append(row)
+
+    # ── Separator ──
+    rows.append({"Parameter": "─" * 12, **{c: "─" * 10 for c in all_cols}})
+
+    # ── Surgical Plan ──
+    rows.append({"Parameter": "SURGICAL PLAN", **{c: "" for c in all_cols}})
+    for col in config.PLAN_COLS:
+        plan_row = {"Parameter": _PLAN_COL_DISPLAY.get(col, col)}
+        plan_row[col_actual] = actual_result["plan"].get(col, "-")
+        for idx, r in solutions_df.iterrows():
+            plan_row[f"Sol {idx+1}"] = r.get(col, "-")
+        rows.append(plan_row)
+
+    rows.append({"Parameter": "─" * 12, **{c: "─" * 10 for c in all_cols}})
+
+    # ── Postop Values ──
+    rows.append({"Parameter": "POSTOP VALUES", **{c: "" for c in all_cols}})
+    for param in alignment_params:
+        postop_key = f"{param}_postop"
+        param_row = {"Parameter": param}
+        av = actual_result["postop_values"].get(postop_key)
+        param_row[col_actual] = _f1(av) if av is not None else "-"
+        for idx, r in solutions_df.iterrows():
+            val = r.get(postop_key)
+            param_row[f"Sol {idx+1}"] = _f1(val) if val is not None else "-"
+        rows.append(param_row)
+
+    if pi_val is not None:
+        pi_row = {"Parameter": "PI", **{c: _f1(pi_val) for c in all_cols}}
+        rows.append(pi_row)
+
+    pt_preop = patient_fixed.get("PT_preop")
+    if pt_preop is not None and pi_val is not None:
+        pt_row = {"Parameter": "PT"}
+        a_ss = actual_result["postop_values"].get("SS_postop")
+        pt_row[col_actual] = _f1(pi_val - a_ss) if a_ss is not None else "-"
+        for idx, r in solutions_df.iterrows():
+            ss = r.get("SS_postop")
+            pt_row[f"Sol {idx+1}"] = _f1(pi_val - ss) if ss is not None else "-"
+        rows.append(pt_row)
+
+    rows.append({"Parameter": "─" * 12, **{c: "─" * 10 for c in all_cols}})
+
+    # ── Constraints ──
+    rows.append({"Parameter": "CONSTRAINTS", **{c: "" for c in all_cols}})
+
+    # Helper to build constraint rows
+    def _constraint_row(label, actual_val, actual_check, sol_fn):
+        """Build a constraint row with status markers."""
+        cr = {"Parameter": label}
+        if actual_val is not None:
+            status = "✓" if actual_check(actual_val) else "⚠"
+            cr[col_actual] = f"{actual_val:.1f} {status}"
+        else:
+            cr[col_actual] = "-"
+        for idx, r in solutions_df.iterrows():
+            v = sol_fn(r)
+            if v is not None:
+                status = "✓" if actual_check(v) else "⚠"
+                cr[f"Sol {idx+1}"] = f"{v:.1f} {status}"
+            else:
+                cr[f"Sol {idx+1}"] = "-"
+        return cr
+
+    actual_ll = actual_result["postop_values"].get("LL_postop")
+    actual_l1pa = actual_result["postop_values"].get("L1PA_postop")
+    actual_t4pa = actual_result["postop_values"].get("T4PA_postop")
+    actual_l4s1 = actual_result["postop_values"].get("L4S1_postop")
+
+    # PI-LL (0–10)
+    pi_ll_actual = (pi_val - actual_ll) if (pi_val is not None and actual_ll is not None) else None
+    rows.append(_constraint_row(
+        "PI-LL (0–10)", pi_ll_actual, lambda v: 0 <= v <= 10,
+        lambda r: (pi_val - r["LL_postop"]) if (pi_val is not None and r.get("LL_postop") is not None) else None
+    ))
+
+    # L1PA−ideal (|d|≤3)
+    if pi_val is not None:
+        ideal_l1pa = calculate_ideal_l1pa(pi_val)
+        a_diff = (actual_l1pa - ideal_l1pa) if actual_l1pa is not None else None
+        rows.append(_constraint_row(
+            "L1PA−ideal (|d|≤3)", a_diff, lambda v: abs(v) <= 3,
+            lambda r: (r["L1PA_postop"] - ideal_l1pa) if r.get("L1PA_postop") is not None else None
+        ))
+
+    # L4S1 (35–45)
+    rows.append(_constraint_row(
+        "L4S1 (35–45)", actual_l4s1, lambda v: 35 <= v <= 45,
+        lambda r: r.get("L4S1_postop")
+    ))
+
+    # T4PA−L1PA (|d|≤3)
+    a_t4l1 = (actual_t4pa - actual_l1pa) if (actual_t4pa is not None and actual_l1pa is not None) else None
+    rows.append(_constraint_row(
+        "T4PA−L1PA (|d|≤3)", a_t4l1, lambda v: abs(v) <= 3,
+        lambda r: (r["T4PA_postop"] - r["L1PA_postop"]) if (r.get("T4PA_postop") is not None and r.get("L1PA_postop") is not None) else None
+    ))
+
+    # LL−ideal (|d|≤3)
+    if pi_val is not None:
+        ideal_ll = calculate_ideal_ll(pi_val)
+        a_ll_diff = (actual_ll - ideal_ll) if actual_ll is not None else None
+        rows.append(_constraint_row(
+            "LL−ideal (|d|≤3)", a_ll_diff, lambda v: abs(v) <= 3,
+            lambda r: (r["LL_postop"] - ideal_ll) if r.get("LL_postop") is not None else None
+        ))
+
+    # GAP Category (P)
+    gap_row = {"Parameter": "GAP Category (P)"}
+    a_cat = a_gap["gap_category"]
+    gap_row[col_actual] = f"{a_cat} {'✓' if a_cat == 'P' else '⚠'}"
+    for idx, r in solutions_df.iterrows():
+        cat = r.get("gap_category", "-")
+        gap_row[f"Sol {idx+1}"] = f"{cat} {'✓' if cat == 'P' else '⚠'}"
+    rows.append(gap_row)
+
+    df_combined = pd.DataFrame(rows)
+
+    # Style: highlight Actual column with subtle grey background
+    def _highlight_actual(col):
+        if col.name == col_actual:
+            return ["background-color: rgba(255,255,255,0.08)"] * len(col)
+        return [""] * len(col)
+
+    styled = df_combined.style.apply(_highlight_actual, axis=0).hide(axis="index")
+    ipy_display(styled)
     return df_combined
