@@ -57,6 +57,11 @@ PRESETS = {
         "description": "Primarily overall GAP alignment score and category improvement, with mech failure guard",
         "weights": {"w1": 0.5, "w2": 0, "w3": 0, "w4": 0, "w5": 0, "w6": 0.3, "w_mech_fail": 0.2},
     },
+    "gap_score_mech_fail": {
+        "label": "Minimize GAP Score and Mechanical Failure",
+        "description": "Primarily overall GAP alignment score and category improvement, with mech failure guard",
+        "weights": {"w1": 0.4, "w2": 0, "w3": 0, "w4": 0, "w5": 0, "w6": 0.1, "w_mech_fail": 0.5},
+    },
     "ll": {
         "label": "Minimize LL (PI-LL) Penalty",
         "description": "Primarily PI-LL mismatch, with mech failure guard",
@@ -174,7 +179,7 @@ def run_optimization(
         top_n=top_n,
         top_per_gen=50,
         score_tolerance=score_tolerance,
-        bucket_cols=("UIV_implant", "ALIF", "XLIF", "TLIF"),
+        bucket_cols=("UIV_implant", "num_levels_cat", "ALIF", "XLIF", "TLIF"),
         n_per_bucket=1,
         patient_fixed=patient_fixed,
         delta_bundles=delta_bundles,
