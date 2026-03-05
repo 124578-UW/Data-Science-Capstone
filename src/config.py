@@ -123,6 +123,8 @@ DECISION_VAR_LOWER_BOUNDS = np.array([var["lower"] for var in DECISION_VAR_SPECS
 DECISION_VAR_UPPER_BOUNDS = np.array([var["upper"] for var in DECISION_VAR_SPECS], dtype=int)
 DECISION_VAR_MAPPING = {i: name for i, name in enumerate(PLAN_COLS)}
 
+BINARY_INDICATOR_COLS = ["ALIF", "XLIF", "TLIF", "osteotomy", "revision", "smoking"]
+
 # ============================================================================
 # PATIENT FIXED VARIABLES
 # ============================================================================
