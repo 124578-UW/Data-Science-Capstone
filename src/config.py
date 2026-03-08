@@ -152,7 +152,6 @@ PATIENT_FIXED_COLS = [
     "global_tilt_preop", # Preop Global Tilt (used as GlobalTilt_preop)
     "CCI",
     "ASA_CLASS",
-    "revision",             # Revision indicator (interbody > 0 but no ALIF/XLIF/TLIF)
     "ODI_preop",            # Preop ODI score for postop ODI prediction
 ]
 # ============================================================================
@@ -167,10 +166,6 @@ MECH_FAIL_TARGET = "mech_fail_last"
 # Mechanical failure uses smoking additionally
 
 MECH_FAIL_FEATURES = PATIENT_FIXED_COLS + PLAN_COLS + ["smoking"]
-MECH_FAIL_FEATURES.remove("revision")
 
 # Delta models do NOT use smoking
 DELTA_MODEL_FEATURES = PATIENT_FIXED_COLS + PLAN_COLS
-DELTA_MODEL_FEATURES.remove("revision")
-
-
