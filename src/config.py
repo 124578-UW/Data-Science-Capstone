@@ -153,6 +153,7 @@ PATIENT_FIXED_COLS = [
     "CCI",
     "ASA_CLASS",
     "ODI_preop",            # Preop ODI score for postop ODI prediction
+    "revision"
 ]
 # ============================================================================
 # TARGETS
