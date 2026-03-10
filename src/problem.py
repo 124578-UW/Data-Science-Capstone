@@ -23,9 +23,10 @@ class SpineProblem(ElementwiseProblem):
         weights: dict with keys w1-w6, w_mech_fail, w_odi for composite score weights (optional)
         mech_fail_bundle: mechanical failure model bundle (optional, needed if w_mech_fail > 0)
         odi_bundle: ODI model bundle (optional, needed if w_odi > 0)
+        pso_ll_override: if True, clamp predicted delta_LL to procedure-based correction range
     """
     
-    def __init__(self, patient_fixed, delta_bundles, xl, xu, weights=None, mech_fail_bundle=None, odi_bundle=None):
+    def __init__(self, patient_fixed, delta_bundles, xl, xu, weights=None, mech_fail_bundle=None, odi_bundle=None, pso_ll_override=False):
         super().__init__(
             n_var=len(xl),
             n_obj=1,
@@ -39,6 +40,7 @@ class SpineProblem(ElementwiseProblem):
         self.weights = weights or {}
         self.mech_fail_bundle = mech_fail_bundle
         self.odi_bundle = odi_bundle
+        self.pso_ll_override = pso_ll_override
 
     def _evaluate(self, x, out, *args, **kwargs):
         # Round to integers first — GA operates on floats internally,
@@ -69,7 +71,8 @@ class SpineProblem(ElementwiseProblem):
             self.delta_bundles,
             mech_fail_bundle=self.mech_fail_bundle,
             odi_bundle=self.odi_bundle,
-            weights=self.weights
+            weights=self.weights,
+            pso_ll_override=self.pso_ll_override,
         )
         
         out["F"] = [f]

@@ -9,6 +9,7 @@ from pymoo.operators.mutation.pm import PM
 
 import src.optimization_utils as ou
 import src.solutions as s
+from src import config
 from src.problem import SpineProblem
 
 
@@ -110,6 +111,7 @@ def run_optimization(
     verbose=False,
     top_n=12,
     score_tolerance=2,
+    pso_ll_override=False,
 ):
     """
     Run a single GA optimization with the given preset.
@@ -126,6 +128,7 @@ def run_optimization(
         verbose: print GA progress
         top_n: number of diverse solutions to extract
         score_tolerance: score window around best for diverse solutions
+        pso_ll_override: if True, clamp predicted delta_LL to procedure-based correction range
 
     Returns:
         dict with keys:
@@ -137,6 +140,14 @@ def run_optimization(
             - diverse_df: DataFrame of top diverse solutions
     """
     weights = preset["weights"]
+
+    # Skip ODI-weighted scenarios if patient has no preop ODI
+    import math
+    odi_preop = patient_fixed.get("ODI_preop")
+    has_odi = odi_preop is not None and not (isinstance(odi_preop, float) and math.isnan(odi_preop))
+    if weights.get("w_odi", 0) > 0 and not has_odi:
+        print(f"  ⚠ Skipped: patient has no preop ODI")
+        return None
 
     # Only pass bundles to optimizer if their weights are active
     mf_bundle = mech_fail_bundle if weights.get("w_mech_fail", 0) > 0 else None
@@ -150,6 +161,7 @@ def run_optimization(
         weights=weights,
         mech_fail_bundle=mf_bundle,
         odi_bundle=odi_bun_optim,
+        pso_ll_override=pso_ll_override,
     )
 
     algorithm = GA(
@@ -169,9 +181,10 @@ def run_optimization(
         save_history=True,
     )
 
-    best_x = np.asarray(res.X).astype(int)
+    best_x = np.rint(np.asarray(res.X)).astype(int)
     best_result = ou.evaluate_solution(
-        best_x, patient_fixed, delta_bundles, mech_fail_bundle, weights=weights, odi_bundle=odi_bundle
+        best_x, patient_fixed, delta_bundles, mech_fail_bundle, weights=weights, odi_bundle=odi_bundle,
+        pso_ll_override=pso_ll_override,
     )
 
     diverse_df = s.get_diverse_solutions(
@@ -179,13 +192,14 @@ def run_optimization(
         top_n=top_n,
         top_per_gen=50,
         score_tolerance=score_tolerance,
-        bucket_cols=("UIV_implant", "num_levels_cat", "ALIF", "XLIF", "TLIF"),
+        bucket_cols=config.PLAN_COLS,
         n_per_bucket=1,
         patient_fixed=patient_fixed,
         delta_bundles=delta_bundles,
         mech_fail_bundle=mech_fail_bundle,
         odi_bundle=odi_bundle,
         weights=weights,
+        pso_ll_override=pso_ll_override,
     )
 
     return {

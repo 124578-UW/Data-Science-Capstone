@@ -14,7 +14,8 @@ def get_diverse_solutions(res,
                           delta_bundles=None,
                           mech_fail_bundle=None,
                           odi_bundle=None,
-                          weights=None):
+                          weights=None,
+                          pso_ll_override=False):
     """
     Extract diverse solutions from optimization history.
     
@@ -30,6 +31,7 @@ def get_diverse_solutions(res,
         mech_fail_bundle: mech fail model bundle (optional, for full evaluation)
         odi_bundle: ODI model bundle (optional, for full evaluation)
         weights: composite score weights (optional, for full evaluation)
+        pso_ll_override: if True, clamp delta_LL to literature ranges
         
     Returns:
         DataFrame with diverse top solutions (with postop values if bundles provided)
@@ -110,7 +112,7 @@ def get_diverse_solutions(res,
         eval_rows = []
         for _, row in selected.iterrows():
             x = row["x"]
-            result = ou.evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights, odi_bundle=odi_bundle)
+            result = ou.evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights, odi_bundle=odi_bundle, pso_ll_override=pso_ll_override)
             
             eval_row = {col: row[col] for col in plan_cols}
             eval_row["composite_score"] = round(result["display_composite_score"], 2)

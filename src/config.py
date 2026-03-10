@@ -21,6 +21,15 @@ DATA_PROCESSED = PROJECT_ROOT / "data" / "processed" / "cleaned_for_modeling.csv
 # Holdout test patients (excluded from training)
 DATA_HOLDOUT = PROJECT_ROOT / "data" / "processed" / "holdout_patients.csv"
 
+HOLDOUT_IDS = [1176294, 2964021, 818588, 6380632]
+
+PATIENT_DESCRIPTIONS = {
+    1176294: "mech failure - large GAP improvement;",
+    2964021: "revision - GAP improvement 3 to 1",
+    818588:  "mech failure - small GAP improvement;",
+    6380632: "large GAP improvement",
+}
+
 # ============================================================================
 # MODEL ARTIFACTS
 # ============================================================================
@@ -98,7 +107,7 @@ DECISION_VAR_SPECS = [
         "col_name": "num_rods",
         "vector_name": "num_rods",
         "lower": 1,
-        "upper": 6,
+        "upper": 4,
         "categorical": False,
     },
     {

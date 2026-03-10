@@ -1247,16 +1247,22 @@ def display_patient_preop(patient_fixed, patient_id=None):
     return df
 
 
-def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios):
+def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios,
+                              deduplicate=True):
     """
     Display the actual plan alongside the single best solution from each scenario,
     with columns labeled by scenario name.
+
+    When *deduplicate=True* and two scenarios would show the same surgical plan,
+    the duplicate is replaced by the next-best *distinct* plan from that
+    scenario's diverse solutions so every column is unique.
 
     Args:
         all_results: dict mapping scenario key → run result dict (from runs.run_optimization)
         patient_fixed: dict of patient preop parameters
         actual_eval: dict from ou.evaluate_solution() for the actual surgical plan
         scenarios: list of scenario keys to display (in order)
+        deduplicate: if True, replace duplicate best plans with next-best distinct plan
 
     Returns:
         DataFrame with combined table (unstyled)
@@ -1268,13 +1274,61 @@ def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios
     pi_val = patient_fixed.get("PI_preop")
 
     col_actual = "Actual"
-    # Use short scenario labels as column names
+
+    def _plan_key(result_dict):
+        """Return a hashable tuple of plan values for dedup."""
+        return tuple(result_dict["plan"].get(c) for c in config.PLAN_COLS)
+
+    def _diverse_row_to_result(row):
+        """Convert a diverse_df row into a best_result-style dict."""
+        plan = {c: row[c] for c in config.PLAN_COLS}
+        postop = {k: row[k] for k in row.index if k.endswith("_postop") and k != "PI-LL_postop"}
+        mfp_str = row.get("mech_fail_prob", "0%")
+        mfp = float(str(mfp_str).replace("%", "")) / 100
+        return {
+            "plan": plan,
+            "display_composite_score": row.get("composite_score", 0),
+            "composite_score": row.get("optimization_score", 0),
+            "mech_fail_prob": mfp,
+            "postop_values": postop,
+            "gap_info": {
+                "gap_score": row.get("gap_score", "-"),
+                "gap_category": row.get("gap_category", "-"),
+            },
+        }
+
+    # Build best results, optionally deduplicated
+    seen_plans = set()
     scenario_cols = []
     best_results = []
     for key in scenarios:
+        if key not in all_results:
+            continue
         r = all_results[key]
-        scenario_cols.append(r["label"])
-        best_results.append(r["best_result"])
+        label = r["label"]
+        scenario_cols.append(label)
+        br = r["best_result"]
+
+        if not deduplicate:
+            best_results.append(br)
+            continue
+
+        pk = _plan_key(br)
+        if pk not in seen_plans:
+            seen_plans.add(pk)
+            best_results.append(br)
+        else:
+            # Find the first distinct plan from diverse_df
+            fallback = None
+            diverse_df = r.get("diverse_df")
+            if diverse_df is not None and not diverse_df.empty:
+                for _, drow in diverse_df.iterrows():
+                    dk = tuple(drow.get(c) for c in config.PLAN_COLS)
+                    if dk not in seen_plans:
+                        fallback = _diverse_row_to_result(drow)
+                        seen_plans.add(dk)
+                        break
+            best_results.append(fallback if fallback is not None else br)
 
     all_cols = [col_actual] + scenario_cols
     rows = []
