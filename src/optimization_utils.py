@@ -174,6 +174,38 @@ def debug_candidate(x, patient_fixed, bundle, uiv_choices):
 
 
 # ============================================================================
+# Clinical Correction Rules
+# ============================================================================
+
+# Clinical delta_LL correction: when PSO (osteotomy) is present,
+# the expected lordosis correction is 20–45.
+_PSO_LL_LOWER = 20.0
+_PSO_LL_UPPER = 45.0
+
+
+def clamp_delta_ll(delta_ll_ml: float, plan: dict) -> float:
+    """
+    Clamp ML-predicted delta_LL to a clinically expected range when
+    osteotomy (PSO) is present.
+
+    If PSO is present and the prediction falls outside [20, 45],
+    it is clamped to that range.  Otherwise the ML prediction is
+    returned unchanged.
+
+    Args:
+        delta_ll_ml: raw ML prediction for delta_LL
+        plan: decoded surgical plan dict (keys: osteotomy, …)
+
+    Returns:
+        Clamped delta_LL value
+    """
+    if plan.get("osteotomy", 0) != 1:
+        return delta_ll_ml
+
+    return float(min(max(delta_ll_ml, _PSO_LL_LOWER), _PSO_LL_UPPER))
+
+
+# ============================================================================
 # Delta Model Predictions
 # ============================================================================
 
@@ -212,7 +244,7 @@ def predict_all_deltas(full_dict, delta_bundles):
 # Composite Score Fitness
 # ============================================================================
 
-def fitness_composite_score(x, patient_fixed, delta_bundles, mech_fail_bundle=None, odi_bundle=None, weights=None):
+def fitness_composite_score(x, patient_fixed, delta_bundles, mech_fail_bundle=None, odi_bundle=None, weights=None, pso_ll_override=False):
     """
     Scalar fitness to MINIMIZE: composite score based on predicted outcomes.
     
@@ -223,6 +255,7 @@ def fitness_composite_score(x, patient_fixed, delta_bundles, mech_fail_bundle=No
         mech_fail_bundle: mechanical failure model bundle (optional, for w_mech_fail)
         odi_bundle: ODI model bundle (optional, for w_odi)
         weights: dict with keys w1-w6, w_mech_fail, w_odi for composite score weights (optional)
+        pso_ll_override: if True, clamp predicted delta_LL to procedure-based correction range
         
     Returns:
         float: composite score (lower is better)
@@ -258,6 +291,10 @@ def fitness_composite_score(x, patient_fixed, delta_bundles, mech_fail_bundle=No
         "delta_L1PA": deltas.get("delta_L1PA", 0),
     }
     
+    # Apply clinical correction to delta_LL if enabled
+    if pso_ll_override:
+        delta_predictions["delta_LL"] = clamp_delta_ll(delta_predictions["delta_LL"], plan)
+    
     # Calculate composite score
     if weights is None:
         weights = {}
@@ -286,7 +323,7 @@ def fitness_composite_score(x, patient_fixed, delta_bundles, mech_fail_bundle=No
     return composite
 
 
-def evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights=None, odi_bundle=None):
+def evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights=None, odi_bundle=None, pso_ll_override=False):
     """
     Evaluate a solution and return detailed results including composite score,
     mechanical failure probability, predicted deltas, and GAP info.
@@ -298,6 +335,7 @@ def evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights
         mech_fail_bundle: mechanical failure model bundle
         weights: dict with keys w1-w6 for composite score weights (optional)
         odi_bundle: ODI model bundle (optional, for w_odi)
+        pso_ll_override: if True, clamp predicted delta_LL to procedure-based correction range
         
     Returns:
         dict with plan, composite_score, mech_fail_prob, deltas, postop_values, gap_info
@@ -335,6 +373,10 @@ def evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights
         "delta_T4PA": deltas.get("delta_T4PA", 0),
         "delta_L1PA": deltas.get("delta_L1PA", 0),
     }
+    
+    # Apply clinical correction to delta_LL if enabled
+    if pso_ll_override:
+        delta_predictions["delta_LL"] = clamp_delta_ll(delta_predictions["delta_LL"], plan)
     
     if weights is None:
         weights = {}
@@ -383,6 +425,124 @@ def evaluate_solution(x, patient_fixed, delta_bundles, mech_fail_bundle, weights
         odi_postop=None
     )
     
+    return {
+        "plan": plan,
+        "composite_score": composite,
+        "display_composite_score": display_composite,
+        "mech_fail_prob": mech_fail_prob,
+        "deltas": deltas,
+        "postop_values": postop_values,
+        "gap_info": gap_info,
+    }
+
+
+def evaluate_actual_plan(x, patient_fixed, holdout_row, mech_fail_bundle):
+    """
+    Evaluate the actual surgical plan using *real* postop values from the
+    holdout data rather than ML-predicted deltas.
+
+    The mechanical failure model is still applied to the plan.  The alignment
+    composite score is computed from recorded postop alignment values.
+
+    Args:
+        x: decision vector (ints) for the actual plan
+        patient_fixed: dict with patient preop values
+        holdout_row: pandas Series (one row from holdout_patients.csv)
+        mech_fail_bundle: mechanical failure model bundle
+
+    Returns:
+        dict compatible with evaluate_solution output (plan, composite_score,
+        display_composite_score, mech_fail_prob, deltas, postop_values, gap_info)
+    """
+    from src import scoring
+
+    plan = decode_plan(x)
+    full = build_full_input(patient_fixed, plan)
+
+    # Predict mechanical failure (model-based)
+    mech_fail_prob = predict_mech_fail_prob(full, mech_fail_bundle)
+
+    # Map holdout column names → internal postop names
+    _COL_MAP = {
+        "LL_postop": "LL_postop",
+        "SS_postop": "SS_postop",
+        "L4_S1_postop": "L4S1_postop",
+        "global_tilt_postop": "GlobalTilt_postop",
+        "T4PA_postop": "T4PA_postop",
+        "L1PA_postop": "L1PA_postop",
+        "SVA_postop": "SVA_postop",
+    }
+
+    postop_values = {}
+    for src_col, dst_key in _COL_MAP.items():
+        val = holdout_row.get(src_col)
+        if val is not None and not (isinstance(val, float) and np.isnan(val)):
+            postop_values[dst_key] = float(val)
+
+    # Back-compute deltas from actual postop − preop
+    _PREOP_MAP = {
+        "delta_LL": ("LL_postop", "LL_preop"),
+        "delta_SS": ("SS_postop", "SS_preop"),
+        "delta_L4S1": ("L4S1_postop", "L4S1_preop"),
+        "delta_GlobalTilt": ("GlobalTilt_postop", "GlobalTilt_preop"),
+        "delta_T4PA": ("T4PA_postop", "T4PA_preop"),
+        "delta_L1PA": ("L1PA_postop", "L1PA_preop"),
+    }
+    deltas = {}
+    for delta_key, (post_key, pre_key) in _PREOP_MAP.items():
+        post_val = postop_values.get(post_key)
+        pre_val = patient_fixed.get(pre_key)
+        if post_val is not None and pre_val is not None:
+            deltas[delta_key] = post_val - pre_val
+        else:
+            deltas[delta_key] = 0.0
+
+    if "SVA_postop" in postop_values and patient_fixed.get("SVA_preop") is not None:
+        deltas["delta_SVA"] = postop_values["SVA_postop"] - patient_fixed["SVA_preop"]
+
+    # Build patient_preop dict for scoring
+    patient_preop = {
+        "PI_preop": patient_fixed.get("PI_preop"),
+        "LL_preop": patient_fixed.get("LL_preop"),
+        "SS_preop": patient_fixed.get("SS_preop"),
+        "L4S1_preop": patient_fixed.get("L4S1_preop"),
+        "GlobalTilt_preop": patient_fixed.get("GlobalTilt_preop"),
+        "T4PA_preop": patient_fixed.get("T4PA_preop"),
+        "L1PA_preop": patient_fixed.get("L1PA_preop"),
+        "age": patient_fixed.get("age"),
+        "gap_category": patient_fixed.get("gap_category"),
+    }
+
+    delta_predictions = {
+        "delta_LL": deltas.get("delta_LL", 0),
+        "delta_SS": deltas.get("delta_SS", 0),
+        "delta_L4S1": deltas.get("delta_L4S1", 0),
+        "delta_GlobalTilt": deltas.get("delta_GlobalTilt", 0),
+        "delta_T4PA": deltas.get("delta_T4PA", 0),
+        "delta_L1PA": deltas.get("delta_L1PA", 0),
+    }
+
+    # Composite with equal weights on alignment only (display score)
+    equal_weights = {f"w{i}": 1 / 6 for i in range(1, 7)}
+    equal_weights["w_mech_fail"] = 0
+    equal_weights["w_odi"] = 0
+
+    display_composite, _, gap_info = scoring.composite_score_from_predictions(
+        patient_preop=patient_preop,
+        delta_predictions=delta_predictions,
+        weights=equal_weights,
+        mech_fail_prob=0.0,
+        odi_postop=None,
+    )
+
+    # Use the same equal weights for the "optimization" score in the Actual column
+    composite = display_composite
+
+    # Add ODI postop from holdout if available
+    odi_postop = holdout_row.get("ODI_postop") or holdout_row.get("ODI_12mo") or holdout_row.get("ODI_6mo")
+    if odi_postop is not None and not (isinstance(odi_postop, float) and np.isnan(odi_postop)):
+        postop_values["ODI_postop"] = float(odi_postop)
+
     return {
         "plan": plan,
         "composite_score": composite,
