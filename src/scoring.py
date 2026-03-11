@@ -301,7 +301,7 @@ def composite_score_calc(
     
     # 1) L1PA quadratic penalty
     l1pa_pen = 0 if abs(l1pa_ideal_mismatch_postop) <= 3 else (abs(l1pa_ideal_mismatch_postop) - 3) ** 2
-    # Normalize to 0-100 scale (max penalty ~2500 for 53 degree mismatch)
+    # Normalize to 0-100 scale
     l1pa_pen = min(l1pa_pen / 25, 100)
     
     # 2) L4S1 quadratic penalty (ideal range 35-45)

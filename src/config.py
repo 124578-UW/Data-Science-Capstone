@@ -21,6 +21,15 @@ DATA_PROCESSED = PROJECT_ROOT / "data" / "processed" / "cleaned_for_modeling.csv
 # Holdout test patients (excluded from training)
 DATA_HOLDOUT = PROJECT_ROOT / "data" / "processed" / "holdout_patients.csv"
 
+HOLDOUT_IDS = [1176294, 2964021, 818588, 6380632]
+
+PATIENT_DESCRIPTIONS = {
+    1176294: "mech failure - large GAP improvement;",
+    2964021: "revision - GAP improvement 3 to 1",
+    818588:  "mech failure - small GAP improvement;",
+    6380632: "large GAP improvement",
+}
+
 # ============================================================================
 # MODEL ARTIFACTS
 # ============================================================================
@@ -98,7 +107,7 @@ DECISION_VAR_SPECS = [
         "col_name": "num_rods",
         "vector_name": "num_rods",
         "lower": 1,
-        "upper": 6,
+        "upper": 4,
         "categorical": False,
     },
     {
@@ -122,6 +131,8 @@ PLAN_COLS = [var["col_name"] for var in DECISION_VAR_SPECS]
 DECISION_VAR_LOWER_BOUNDS = np.array([var["lower"] for var in DECISION_VAR_SPECS], dtype=int)
 DECISION_VAR_UPPER_BOUNDS = np.array([var["upper"] for var in DECISION_VAR_SPECS], dtype=int)
 DECISION_VAR_MAPPING = {i: name for i, name in enumerate(PLAN_COLS)}
+
+BINARY_INDICATOR_COLS = ["ALIF", "XLIF", "TLIF", "osteotomy", "revision", "smoking"]
 
 # ============================================================================
 # PATIENT FIXED VARIABLES
@@ -150,8 +161,8 @@ PATIENT_FIXED_COLS = [
     "global_tilt_preop", # Preop Global Tilt (used as GlobalTilt_preop)
     "CCI",
     "ASA_CLASS",
-    "revision",             # Revision indicator (interbody > 0 but no ALIF/XLIF/TLIF)
     "ODI_preop",            # Preop ODI score for postop ODI prediction
+    "revision"
 ]
 # ============================================================================
 # TARGETS
@@ -165,10 +176,6 @@ MECH_FAIL_TARGET = "mech_fail_last"
 # Mechanical failure uses smoking additionally
 
 MECH_FAIL_FEATURES = PATIENT_FIXED_COLS + PLAN_COLS + ["smoking"]
-MECH_FAIL_FEATURES.remove("revision")
 
 # Delta models do NOT use smoking
 DELTA_MODEL_FEATURES = PATIENT_FIXED_COLS + PLAN_COLS
-DELTA_MODEL_FEATURES.remove("revision")
-
-
