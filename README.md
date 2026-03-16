@@ -39,12 +39,13 @@ Data-Science-Capstone/
 │   ├── runs.py                 # Scenario presets & run_optimization()
 │   ├── scoring.py              # Composite scoring, GAP score, alignment
 │   ├── solutions.py            # Diversity selection for top-N plans
-│   └── display.py              # All display functions
+│   └── display.py              # Result display helpers (preop profile + best-per-scenario)
 ├── notebooks/                  # Jupyter notebooks
 │   ├── 00_data_cleaning.ipynb
 │   ├── 01_mech_failure_model.ipynb
 │   ├── 02_delta_models.ipynb
-│   └── 03_optimization.ipynb
+│   ├── 03_optimization_holdout_patients.ipynb
+│   └── 04_optimization_new_patient.ipynb
 ├── data/
 │   ├── raw/                    # Raw data files here
 │   ├── processed/              # Cleaned train + holdout CSVs
@@ -57,7 +58,7 @@ Data-Science-Capstone/
 
 ## Data Setup
 
-### Add a new raw data file
+### Add a new raw data file for model training
 
 Place your source Excel file in `data/raw/`. Then update the path in **`src/config.py`**:
 
@@ -67,15 +68,27 @@ DATA_RAW = PROJECT_ROOT / "data" / "raw" / "FILE_NAME.xlsx"
 
 The data-cleaning notebook (`00_data_cleaning.ipynb`) reads from this path. If data values have changed, may need to do some additional data cleaning.
 
-### Specifying holdout patient IDs
+### Holdout Patient Selection
 
-Holdout patients are separated from the training set in `00_data_cleaning.ipynb`. To change which patients are held out, edit `HOLDOUT_IDS` and `PATIENT_DESCRIPTIONS` in **`src/config.py`**:
+Holdout patients are separated from the training set in `00_data_cleaning.ipynb` using **PCA + farthest-point sampling** to ensure maximum diversity across preoperative/patient features.
+
+**How it works:**
+
+1. Preoperative/patient features (`PATIENT_FIXED_COLS`) are standardized (impute missing, scale numerics, encode categoricals).
+2. PCA reduces the feature space to the number of components that explain ≥90% of variance.
+3. A greedy farthest-point algorithm starts with patient `1176294` (always included) and iteratively selects the patient whose minimum distance to all already-selected patients is largest.
+4. This repeats until `N_HOLDOUT` patients are selected (default: 10).
+
+To configure, edit **`src/config.py`**:
 
 ```python
-HOLDOUT_IDS = [1176294, 2964021, 818588, 6380632]
+N_HOLDOUT = 10                            # Total holdout patients
+HOLDOUT_SEED_ID = 1176294                 # Fixed seed patient always included
 ```
 
-These patients are saved to `data/processed/holdout_patients.csv` and excluded from model training. They are later used in `03_optimization.ipynb` to compare the optimizer's recommendations against the actual surgical outcomes.
+`src/config.py` stores only the selection settings (seed + holdout count). The final selected holdout ID list is generated in `00_data_cleaning.ipynb` at runtime and written to `data/processed/holdout_patients.csv`.
+
+These patients are saved to `data/processed/holdout_patients.csv` and excluded from model training. They are later used in `03_optimization_holdout_patients.ipynb` to compare the optimizer's recommendations against the actual surgical outcomes.
 
 ---
 
@@ -88,11 +101,42 @@ Run the notebooks **in order**. Each notebook depends on outputs from the previo
 | 1 | `00_data_cleaning.ipynb` | Loads raw Excel data, cleans columns, splits into train/holdout sets, saves to `data/processed/`. |
 | 2 | `01_mech_failure_model.ipynb` | Trains and compares mechanical failure classification models. Saves best model artifact to `artifacts/MechanicalFailure/`. |
 | 3 | `02_delta_models.ipynb` | Trains regression models for each delta alignment parameter (LL, SS, L4S1, GlobalTilt, T4PA, L1PA, SVA) and ODI. Saves model artifacts to `artifacts/`. |
-| 4 | `03_optimization.ipynb` | Loads all trained models, runs the GA optimization for multiple scenarios, and displays results. |
+| 4 | `03_optimization_holdout_patients.ipynb` | Loads all trained models, runs the GA optimization for multiple scenarios on holdout patients, and displays results. |
+| 5 | `04_optimization_new_patient.ipynb` | Accepts manually entered preop data or CSV input (single or multiple rows), validates inputs, computes preop GAP, and runs optimization. |
 
 ---
 
-## Running the Optimization Notebook (`03_optimization.ipynb`)
+## Running the Optimization Notebook (`03_optimization_holdout_patients.ipynb`)
+
+For a patient not present in your holdout CSV, use `04_optimization_new_patient.ipynb`.
+
+## New Patient Input (`04_optimization_new_patient.ipynb`)
+
+Recommended file location for CSV input:
+
+- `data/raw/new_patient_input_template.csv`
+
+The notebook supports either:
+
+- **Dict mode**: edit one Python dictionary directly in the notebook
+- **CSV mode**: add one or more patient rows to the CSV template and set `INPUT_MODE = "csv"`
+
+### Accepted values
+
+- `sex`: `MALE` / `FEMALE` (also accepts `M` / `F`)
+- `revision`, `smoking`: `0` or `1`
+- `ASA_CLASS`: `1` to `5`
+- `id`: optional (recommended for multi-patient CSV files)
+
+### Required columns
+
+Use the template at `data/raw/new_patient_input_template.csv`.
+
+- Source of truth for required model fields: `config.PATIENT_FIXED_COLS`
+- Additional required field for mech-failure prediction: `smoking`
+
+To change accepted categorical/binary values, update `src/optimization_utils.py`:
+- `_ALLOWED_INPUT_VALUES`
 
 ### 1. GA Configuration
 
@@ -100,7 +144,7 @@ The configuration cell at the top of the notebook controls all tunable parameter
 
 ```python
 POP_SIZE  = 100    # GA population size
-N_GEN     = 20     # Number of generations
+N_GEN     = 5      # Number of generations
 SEED      = 42     # Random seed for reproducibility
 TOP_N     = 4      # Number of diverse solutions to display
 SCORE_TOL = 5      # Score window around best for diversity selection
@@ -125,30 +169,18 @@ Choose which optimization scenarios to run by editing the `SCENARIOS` list. Pres
 
 To add a new scenario, add a new entry in `src/runs.py`, similar to these.
 
-### 3. Selecting Patients
+### 3. Patient Selection
 
-Each patient section begins with a cell that sets the patient ID and loads their data from the holdout file:
+The notebook automatically loops over all holdout patients from `data/processed/holdout_patients.csv`.
 
-```python
-PATIENT_ID = 6380632
-patient_fixed = ou.load_patient_data(patient_id=PATIENT_ID, data_path=config.DATA_HOLDOUT)
-```
-
-To add more patients, duplicate one of the existing patient sections (selection → run optimization → display results) and change the patient ID and variable suffixes.
+To change the holdout set, re-run `00_data_cleaning.ipynb` (which uses PCA + farthest-point sampling) or edit `N_HOLDOUT` in `src/config.py`.
 
 ### 4. `DEDUP_BEST` — Deduplicate Best Plans
 
-When `DEDUP_BEST = True`, the "Best Solution per Scenario" table ensures each scenario displays a distinct surgical plan. If two scenarios both select the same best plan, the second one will fall back to its second best diverse alternative, so you can see a wider range of recommendations at a glance.
+When `DEDUP_BEST = True`, the "Best Solution per Scenario" table ensures each scenario displays a distinct surgical plan. If two scenarios both select the same best plan, the second one will fall back to its second best diverse alternative, so you can see a wider range of recommendations
 
 Set `DEDUP_BEST = False` to allow the same plan to appear as "best" in multiple scenarios.
 
 ### 5. `PSO_LL_OVERRIDE` — Delta LL Correction
 
 When `PSO_LL_OVERRIDE = True`, if the surgical plan includes a PSO/osteotomy, the predicted delta LL is clamped to the clinically expected range of **20–45°**.
-
----
-
-## Key Outputs
-
-- **Best Solution per Scenario** — One table showing each scenario's single best plan alongside the actual surgical plan (using real postop values from holdout data).
-- **4 Best Solutions per Scenario** — Per-scenario tables with the actual plan (highlighted) and top diverse optimizer recommendations.

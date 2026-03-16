@@ -3,10 +3,225 @@ import pandas as pd
 import joblib
 
 from src import config
+from src.scoring import calculate_gap_from_postop_values
 
 
 # Columns needed for patient_fixed dict – single source of truth is config
 PATIENT_FIXED_COLS = config.PATIENT_FIXED_COLS
+
+_ALLOWED_INPUT_VALUES = {
+    "sex": ["MALE", "FEMALE", "M", "F"],
+    "revision": [0, 1],
+    "smoking": [0, 1],
+    "ASA_CLASS": [1, 2, 3, 4, 5],
+}
+
+
+def _load_new_patient_input_records(input_mode="dict", patient_input=None, csv_path=None):
+    mode = str(input_mode).strip().lower()
+
+    if mode == "dict":
+        if not isinstance(patient_input, dict):
+            raise ValueError("For dict mode, patient_input must be a dict")
+        return [patient_input]
+
+    if mode == "csv":
+        if csv_path is None:
+            raise ValueError("For csv mode, csv_path is required")
+        csv_df = pd.read_csv(csv_path)
+        if len(csv_df) == 0:
+            raise ValueError(f"CSV file has no rows: {csv_path}")
+        return csv_df.to_dict(orient="records")
+
+    raise ValueError("input_mode must be 'dict' or 'csv'")
+
+
+def review_new_patient_inputs(input_mode="dict", patient_input=None, csv_path=None) -> pd.DataFrame:
+    """
+    Build a validation review table for one or more new-patient input records.
+
+        Status meanings:
+            - ERROR: invalid or missing value; optimization should not run
+            - OK: value is present and valid
+    """
+    records = _load_new_patient_input_records(
+        input_mode=input_mode,
+        patient_input=patient_input,
+        csv_path=csv_path,
+    )
+
+    required_cols = [
+        c for c in config.PATIENT_FIXED_COLS
+        if c not in {"gap_score_preop", "gap_category"}
+    ] + ["smoking"]
+
+    review_rows = []
+    for i, rec in enumerate(records, start=1):
+        raw_id = rec.get("id", f"NEW_PATIENT_{i}")
+        patient_id = f"NEW_PATIENT_{i}" if pd.isna(raw_id) else str(raw_id)
+
+        for field in required_cols:
+            value = rec.get(field, None)
+            status = "OK"
+            note = ""
+            expected = "required"
+
+            if value is None or pd.isna(value):
+                status = "ERROR"
+                note = "Missing required value"
+                if field in _ALLOWED_INPUT_VALUES:
+                    expected = f"One of {_ALLOWED_INPUT_VALUES[field]}"
+                else:
+                    expected = "Numeric"
+                review_rows.append({
+                    "Patient": patient_id,
+                    "Field": field,
+                    "Value": value,
+                    "Expected": expected,
+                    "Status": status,
+                    "Note": note,
+                })
+                continue
+
+            if field == "sex":
+                try:
+                    _normalize_sex(value)
+                    expected = "MALE/FEMALE (or M/F)"
+                except ValueError:
+                    status = "ERROR"
+                    expected = "MALE/FEMALE (or M/F)"
+                    note = "Unrecognized categorical value"
+
+            elif field in {"revision", "smoking"}:
+                try:
+                    _normalize_binary(value, field)
+                    expected = "0 or 1"
+                except ValueError:
+                    status = "ERROR"
+                    expected = "0 or 1"
+                    note = "Must be binary"
+
+            elif field == "ASA_CLASS":
+                expected = "1, 2, 3, 4, or 5"
+                try:
+                    asa_val = float(value)
+                    if asa_val not in _ALLOWED_INPUT_VALUES["ASA_CLASS"]:
+                        status = "ERROR"
+                        note = "ASA class must be one of the accepted integer values"
+                except Exception:
+                    status = "ERROR"
+                    note = "ASA class must be numeric"
+
+            else:
+                expected = "Numeric"
+                try:
+                    float(value)
+                except Exception:
+                    status = "ERROR"
+                    note = "Must be numeric"
+
+            review_rows.append({
+                "Patient": patient_id,
+                "Field": field,
+                "Value": value,
+                "Expected": expected,
+                "Status": status,
+                "Note": note,
+            })
+
+    return pd.DataFrame(review_rows)
+
+
+def _normalize_sex(v):
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    s = str(v).strip().upper()
+    if s in {"M", "MALE"}:
+        return "MALE"
+    if s in {"F", "FEMALE"}:
+        return "FEMALE"
+    raise ValueError("sex must be one of: MALE/FEMALE (or M/F)")
+
+
+def _normalize_binary(v, name):
+    if v in [0, "0", False]:
+        return 0
+    if v in [1, "1", True]:
+        return 1
+    raise ValueError(f"{name} must be 0 or 1")
+
+
+def prepare_new_patient_record(patient_input: dict, fallback_id: str = "NEW_PATIENT") -> dict:
+    """
+    Validate and normalize one new-patient input record for optimization.
+
+    Returns:
+        dict with keys: patient_id, patient_fixed, smoking, profile_row,
+        gap_score_preop, gap_category_preop
+    """
+    required_cols = [
+        c for c in config.PATIENT_FIXED_COLS
+        if c not in {"gap_score_preop", "gap_category"}
+    ] + ["smoking"]
+
+    missing = [c for c in required_cols if c not in patient_input or pd.isna(patient_input[c])]
+    if missing:
+        raise ValueError(f"Missing required fields: {missing}")
+
+    patient_fixed = {k: patient_input.get(k, None) for k in config.PATIENT_FIXED_COLS}
+    patient_fixed["sex"] = _normalize_sex(patient_fixed["sex"])
+    patient_fixed["revision"] = _normalize_binary(patient_fixed["revision"], "revision")
+    smoking = _normalize_binary(patient_input["smoking"], "smoking")
+
+    gap_score_preop, gap_category_preop, *_ = calculate_gap_from_postop_values(
+        ss_postop=float(patient_fixed["SS_preop"]),
+        ll_postop=float(patient_fixed["LL_preop"]),
+        l4s1_postop=float(patient_fixed["L4S1_preop"]),
+        global_tilt_postop=float(patient_fixed["global_tilt_preop"]),
+        pi=float(patient_fixed["PI_preop"]),
+        age=float(patient_fixed["age"]),
+    )
+    patient_fixed["gap_score_preop"] = int(gap_score_preop)
+    patient_fixed["gap_category"] = gap_category_preop
+    patient_fixed["GlobalTilt_preop"] = patient_fixed["global_tilt_preop"]
+
+    raw_id = patient_input.get("id", fallback_id)
+    patient_id = fallback_id if pd.isna(raw_id) else str(raw_id)
+    profile_row = pd.Series({**patient_fixed, "smoking": smoking, "id": patient_id})
+
+    return {
+        "patient_id": patient_id,
+        "patient_fixed": patient_fixed,
+        "smoking": smoking,
+        "profile_row": profile_row,
+        "gap_score_preop": int(gap_score_preop),
+        "gap_category_preop": gap_category_preop,
+    }
+
+
+def prepare_new_patient_inputs(input_mode="dict", patient_input=None, csv_path=None) -> list:
+    """
+    Prepare one or more new-patient records from dict or CSV input.
+
+    Args:
+        input_mode: "dict" or "csv"
+        patient_input: dict when input_mode="dict"
+        csv_path: path to CSV when input_mode="csv"
+
+    Returns:
+        list of prepared patient-record dicts (see prepare_new_patient_record)
+    """
+    records = _load_new_patient_input_records(
+        input_mode=input_mode,
+        patient_input=patient_input,
+        csv_path=csv_path,
+    )
+
+    prepared = []
+    for i, row_dict in enumerate(records, start=1):
+        fallback_id = "NEW_PATIENT" if len(records) == 1 else f"NEW_PATIENT_{i}"
+        prepared.append(prepare_new_patient_record(row_dict, fallback_id=fallback_id))
+    return prepared
 
 
 def load_patient_data(index=None, patient_id=None, data_path=None):
@@ -60,14 +275,6 @@ def load_patient_data(index=None, patient_id=None, data_path=None):
         patient_fixed["GlobalTilt_preop"] = patient_fixed["global_tilt_preop"]
     
     return patient_fixed
-
-
-def get_patient_count(data_path=None):
-    """Get total number of patients in dataset."""
-    if data_path is None:
-        data_path = config.DATA_PROCESSED
-    df = pd.read_csv(data_path)
-    return len(df)
 
 
 def load_model_bundle(path):
@@ -146,31 +353,6 @@ def build_full_input(patient_fixed, plan):
     Merge preop fixed variables with surgical decisions.
     """
     return {**patient_fixed, **plan}
-
-
-def fitness_mech_fail_only(x, patient_fixed, bundle, uiv_choices):
-    """
-    Scalar fitness to MINIMIZE: predicted mech failure probability.
-    """
-    plan = decode_plan(x, uiv_choices)
-    full = build_full_input(patient_fixed, plan)
-    return predict_mech_fail_prob(full, bundle)
-
-
-def debug_candidate(x, patient_fixed, bundle, uiv_choices):
-    """
-    Debug helper for inspecting one candidate.
-    """
-    plan = decode_plan(x, uiv_choices)
-    full = build_full_input(patient_fixed, plan)
-    p_fail = predict_mech_fail_prob(full, bundle)
-
-    return {
-        "x": np.asarray(x).astype(int).tolist(),
-        "plan": plan,
-        "mech_fail_prob": p_fail,
-        "fitness": p_fail,
-    }
 
 
 # ============================================================================
@@ -538,10 +720,17 @@ def evaluate_actual_plan(x, patient_fixed, holdout_row, mech_fail_bundle):
     # Use the same equal weights for the "optimization" score in the Actual column
     composite = display_composite
 
-    # Add ODI postop from holdout if available
-    odi_postop = holdout_row.get("ODI_postop") or holdout_row.get("ODI_12mo") or holdout_row.get("ODI_6mo")
-    if odi_postop is not None and not (isinstance(odi_postop, float) and np.isnan(odi_postop)):
-        postop_values["ODI_postop"] = float(odi_postop)
+    # Add ODI postop from holdout if available (skip non-numeric strings like "NR")
+    odi_candidates = [
+        holdout_row.get("ODI_postop"),
+        holdout_row.get("ODI_12mo"),
+        holdout_row.get("ODI_6mo"),
+    ]
+    for value in odi_candidates:
+        odi_numeric = pd.to_numeric(value, errors="coerce")
+        if pd.notna(odi_numeric):
+            postop_values["ODI_postop"] = float(odi_numeric)
+            break
 
     return {
         "plan": plan,
