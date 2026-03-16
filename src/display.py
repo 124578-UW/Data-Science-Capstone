@@ -11,1146 +11,17 @@ _PLAN_COL_DISPLAY = {
 }
 
 
-def display_optimized_solution(result, patient_fixed):
+def display_patient_preop(patient_fixed, patient_id=None, holdout_row=None):
     """
-    Display the optimized solution summary and alignment table.
-    
-    Args:
-        result: Dictionary from ou.evaluate_solution() containing:
-            - composite_score, mech_fail_prob, plan, deltas, postop_values, gap_info
-        patient_fixed: Dictionary of patient preop parameters
-        
-    Returns:
-        pd.DataFrame: Comparison table of alignment parameters
-    """
-    print("=" * 60)
-    print("BEST SOLUTION SUMMARY (OPTIMIZED)")
-    print("=" * 60)
-    print(f"\nAlignment Score: {result['display_composite_score']:.1f} (lower is better)")
-    print(f"Optimization Score: {result['composite_score']:.1f}")
-    print(f"Mechanical Failure Probability: {result['mech_fail_prob'] * 100:.1f}%")
-    odi_postop = result['postop_values'].get('ODI_postop')
-    if odi_postop is not None:
-        print(f"Predicted ODI Score: {odi_postop:.1f}")
-    else:
-        print("Predicted ODI Score: N/A (no preop ODI)")
-
-    print("\nSurgical Plan:")
-    for k, v in result['plan'].items():
-        label = _PLAN_COL_DISPLAY.get(k, k)
-        print(f"  {label}: {v}")
-
-    # Build comparison table for alignment parameters
-    alignment_params = ["LL", "SS", "L4S1", "GlobalTilt", "T4PA", "L1PA"]
-
-    table_data = []
-    for param in alignment_params:
-        preop_key = f"{param}_preop"
-        delta_key = f"delta_{param}"
-        postop_key = param
-        
-        preop_val = patient_fixed.get(preop_key, None)
-        delta_val = result["deltas"].get(delta_key, None)
-        postop_val = result["postop_values"].get(f"{postop_key}_postop", None)
-        
-        if preop_val is not None:
-            table_data.append({
-                "Parameter": param,
-                "Preop": round(preop_val, 1),
-                "Delta (pred)": round(delta_val, 1) if delta_val else "-",
-                "Postop (pred)": round(postop_val, 1) if postop_val else "-",
-            })
-
-    # Add SVA with delta if available
-    sva_preop = patient_fixed.get("SVA_preop")
-    sva_delta = result["deltas"].get("delta_SVA")
-    sva_postop = result["postop_values"].get("SVA_postop")
-    if sva_preop is not None:
-        table_data.append({
-            "Parameter": "SVA",
-            "Preop": round(sva_preop, 1),
-            "Delta (pred)": round(sva_delta, 1) if sva_delta is not None else "-",
-            "Postop (pred)": round(sva_postop, 1) if sva_postop is not None else "-",
-        })
-
-    # Add PI (unchanged by surgery)
-    pi_val = patient_fixed.get("PI_preop")
-    if pi_val is not None:
-        table_data.append({
-            "Parameter": "PI",
-            "Preop": round(pi_val, 1),
-            "Delta (pred)": "-",
-            "Postop (pred)": round(pi_val, 1),
-        })
-
-    # Add PT with calculated postop (PT = PI - SS)
-    pt_preop = patient_fixed.get("PT_preop")
-    ss_postop = result["postop_values"].get("SS_postop")
-    if pt_preop is not None and pi_val is not None and ss_postop is not None:
-        pt_postop = pi_val - ss_postop
-        pt_delta = pt_postop - pt_preop
-        table_data.append({
-            "Parameter": "PT",
-            "Preop": round(pt_preop, 1),
-            "Delta (pred)": round(pt_delta, 1),
-            "Postop (pred)": round(pt_postop, 1),
-        })
-
-    # Add Age (no delta)
-    age_val = patient_fixed.get("age")
-    if age_val is not None:
-        table_data.append({
-            "Parameter": "Age",
-            "Preop": age_val,
-            "Delta (pred)": "-",
-            "Postop (pred)": "-",
-        })
-
-    # Add GAP Score and GAP Category
-    table_data.append({
-        "Parameter": "GAP Score",
-        "Preop": patient_fixed.get("gap_score_preop", "-"),
-        "Delta (pred)": "-",
-        "Postop (pred)": result["gap_info"]["gap_score"],
-    })
-    table_data.append({
-        "Parameter": "GAP Category",
-        "Preop": patient_fixed.get("gap_category", "-"),
-        "Delta (pred)": "→",
-        "Postop (pred)": result["gap_info"]["gap_category"],
-    })
-
-    # ── CONSTRAINTS section ──
-    table_data.append({
-        "Parameter": "─── CONSTRAINTS ───",
-        "Preop": "", "Delta (pred)": "", "Postop (pred)": "",
-    })
-
-    ll_preop = patient_fixed.get("LL_preop")
-    ll_postop = result["postop_values"].get("LL_postop")
-
-    # PI-LL (ideal 0-10)
-    if pi_val is not None and ll_preop is not None and ll_postop is not None:
-        pi_ll_preop = pi_val - ll_preop
-        pi_ll_postop = pi_val - ll_postop
-        pre_s = "✓" if 0 <= pi_ll_preop <= 10 else "⚠"
-        post_s = "✓" if 0 <= pi_ll_postop <= 10 else "⚠"
-        table_data.append({
-            "Parameter": "PI-LL (0–10)",
-            "Preop": f"{round(pi_ll_preop, 1)} {pre_s}",
-            "Delta (pred)": round(pi_ll_postop - pi_ll_preop, 1),
-            "Postop (pred)": f"{round(pi_ll_postop, 1)} {post_s}",
-        })
-
-    # L1PA vs ideal (ideal = 0.5*PI - 21, tolerance ±3)
-    l1pa_preop = patient_fixed.get("L1PA_preop")
-    l1pa_postop = result["postop_values"].get("L1PA_postop")
-    if l1pa_preop is not None and l1pa_postop is not None and pi_val is not None:
-        from src.scoring import calculate_ideal_l1pa
-        ideal_l1pa = calculate_ideal_l1pa(pi_val)
-        diff_pre = l1pa_preop - ideal_l1pa
-        diff_post = l1pa_postop - ideal_l1pa
-        pre_s = "✓" if abs(diff_pre) <= 3 else "⚠"
-        post_s = "✓" if abs(diff_post) <= 3 else "⚠"
-        table_data.append({
-            "Parameter": "L1PA−ideal (|d|≤3)",
-            "Preop": f"{round(diff_pre, 1)} {pre_s}",
-            "Delta (pred)": round(diff_post - diff_pre, 1),
-            "Postop (pred)": f"{round(diff_post, 1)} {post_s}",
-        })
-
-    # L4S1 (35-45)
-    l4s1_preop = patient_fixed.get("L4S1_preop")
-    l4s1_postop = result["postop_values"].get("L4S1_postop")
-    if l4s1_preop is not None and l4s1_postop is not None:
-        pre_s = "✓" if 35 <= l4s1_preop <= 45 else "⚠"
-        post_s = "✓" if 35 <= l4s1_postop <= 45 else "⚠"
-        table_data.append({
-            "Parameter": "L4S1 (35–45)",
-            "Preop": f"{round(l4s1_preop, 1)} {pre_s}",
-            "Delta (pred)": round(l4s1_postop - l4s1_preop, 1),
-            "Postop (pred)": f"{round(l4s1_postop, 1)} {post_s}",
-        })
-
-    # T4PA-L1PA (|diff| ≤ 3)
-    t4pa_preop = patient_fixed.get("T4PA_preop")
-    t4pa_postop = result["postop_values"].get("T4PA_postop")
-    if t4pa_preop is not None and l1pa_preop is not None and t4pa_postop is not None and l1pa_postop is not None:
-        diff_pre = t4pa_preop - l1pa_preop
-        diff_post = t4pa_postop - l1pa_postop
-        pre_s = "✓" if abs(diff_pre) <= 3 else "⚠"
-        post_s = "✓" if abs(diff_post) <= 3 else "⚠"
-        table_data.append({
-            "Parameter": "T4PA−L1PA (|d|≤3)",
-            "Preop": f"{round(diff_pre, 1)} {pre_s}",
-            "Delta (pred)": round(diff_post - diff_pre, 1),
-            "Postop (pred)": f"{round(diff_post, 1)} {post_s}",
-        })
-
-    # LL vs ideal (|LL - ideal| ≤ 3)
-    from src.scoring import calculate_ideal_ll
-    if pi_val is not None and ll_preop is not None and ll_postop is not None:
-        ideal_ll = calculate_ideal_ll(pi_val)
-        diff_pre = ll_preop - ideal_ll
-        diff_post = ll_postop - ideal_ll
-        pre_s = "✓" if abs(diff_pre) <= 3 else "⚠"
-        post_s = "✓" if abs(diff_post) <= 3 else "⚠"
-        table_data.append({
-            "Parameter": "LL−ideal (|d|≤3)",
-            "Preop": f"{round(diff_pre, 1)} {pre_s}",
-            "Delta (pred)": round(diff_post - diff_pre, 1),
-            "Postop (pred)": f"{round(diff_post, 1)} {post_s}",
-        })
-
-    # GAP Category (ideal: P)
-    gap_cat_pre = patient_fixed.get("gap_category", "-")
-    gap_cat_post = result["gap_info"]["gap_category"]
-    pre_s = "✓" if gap_cat_pre == "P" else "⚠"
-    post_s = "✓" if gap_cat_post == "P" else "⚠"
-    table_data.append({
-        "Parameter": "GAP Cat (P)",
-        "Preop": f"{gap_cat_pre} {pre_s}",
-        "Delta (pred)": "→",
-        "Postop (pred)": f"{gap_cat_post} {post_s}",
-    })
-
-    print("\n" + "=" * 60)
-    print("ALIGNMENT PARAMETERS: PREOP → POSTOP (PREDICTED)")
-    print("=" * 60)
-    
-    return pd.DataFrame(table_data)
-
-
-def display_actual_outcomes(patient_id, patient_fixed, data_path=None,
-                            delta_bundles=None, mech_fail_bundle=None,
-                            odi_bundle=None, presets=None):
-    """
-    Display the actual surgical plan and outcomes for a patient.
-    
-    Args:
-        patient_id: Patient ID to look up
-        patient_fixed: Dictionary of patient preop parameters (for reference)
-        data_path: Path to processed data CSV (defaults to config.DATA_PROCESSED)
-        delta_bundles: dict of delta model bundles (optional, for scoring)
-        mech_fail_bundle: mechanical failure model bundle (optional, for scoring)
-        odi_bundle: ODI model bundle (optional, for scoring)
-        presets: dict of scenario presets from runs.PRESETS (optional, for scoring)
-        
-    Returns:
-        pd.DataFrame: Comparison table of actual alignment parameters
-    """
-    if data_path is None:
-        data_path = config.DATA_PROCESSED
-        
-    df_full = pd.read_csv(data_path)
-    patient_row = df_full[df_full["id"] == patient_id].iloc[0]
-
-    # Actual surgical plan columns (map display name to data column name)
-    actual_plan_cols = [
-        ("UIV_implant", "UIV_implant"),
-        ("num_levels_cat", "num_levels_cat"),
-        ("num_interbody_fusion_levels", "num_interbody_fusion_levels"),
-        ("ALIF", "ALIF"),
-        ("XLIF", "XLIF"),
-        ("TLIF", "TLIF"),
-        ("num_rods", "num_rods"),
-        ("num_pelvic_screws", "num_pelvic_screws"),
-        ("osteotomy (PSO)", "osteotomy"),
-    ]
-
-    print("=" * 60)
-    print("ACTUAL SURGICAL PLAN (WHAT WAS PERFORMED)")
-    print("=" * 60)
-    for display_name, col in actual_plan_cols:
-        if col in patient_row.index:
-            print(f"  {display_name}: {patient_row[col]}")
-
-    # Show key outcomes
-    mech_fail = patient_row.get("mech_fail_last")
-    if mech_fail is not None and pd.notna(mech_fail):
-        print(f"\n  Mechanical Failure: {'Yes' if mech_fail else 'No'}")
-
-    odi_pre = patient_row.get("ODI_preop")
-    odi_post = patient_row.get("ODI_12mo")
-    odi_pre_str = f"{round(odi_pre, 1)}" if odi_pre is not None and pd.notna(odi_pre) else "N/A"
-    odi_post_str = f"{round(odi_post, 1)}" if odi_post is not None and pd.notna(odi_post) else "N/A"
-    print(f"  ODI: {odi_pre_str} (preop) → {odi_post_str} (12mo)")
-
-    # Build comparison table with actual postop values
-    # Format: (display_name, preop_col_in_data, postop_col_in_data)
-    alignment_params_actual = [
-        ("LL", "LL_preop", "LL_postop"),
-        ("SS", "SS_preop", "SS_postop"),
-        ("L4S1", "L4S1_preop", "L4_S1_postop"),
-        ("GlobalTilt", "global_tilt_preop", "global_tilt_postop"),
-        ("T4PA", "T4PA_preop", "T4PA_postop"),
-        ("L1PA", "L1PA_preop", "L1PA_postop"),
-    ]
-
-    table_actual = []
-    for param, preop_col, postop_col in alignment_params_actual:
-        preop_val = patient_row.get(preop_col, None)
-        postop_val = patient_row.get(postop_col, None) if postop_col else None
-        
-        if pd.notna(preop_val) and pd.notna(postop_val):
-            delta_val = postop_val - preop_val
-        else:
-            delta_val = None
-        
-        if preop_val is not None and pd.notna(preop_val):
-            table_actual.append({
-                "Parameter": param,
-                "Preop": round(preop_val, 1),
-                "Delta (actual)": round(delta_val, 1) if delta_val is not None else "-",
-                "Postop (actual)": round(postop_val, 1) if postop_val is not None and pd.notna(postop_val) else "-",
-            })
-
-    # Add other parameters
-    other_actual = [
-        ("PI", "PI_preop", "PI_postop"),
-        ("PT", "PT_preop", "PT_postop"),
-        ("SVA", "SVA_preop", "SVA_postop"),
-    ]
-    for name, preop_col, postop_col in other_actual:
-        preop_val = patient_row.get(preop_col, None)
-        postop_val = patient_row.get(postop_col, None) if postop_col else None
-        
-        if pd.notna(preop_val) and pd.notna(postop_val):
-            delta_val = postop_val - preop_val
-        else:
-            delta_val = None
-        
-        if preop_val is not None and pd.notna(preop_val):
-            table_actual.append({
-                "Parameter": name,
-                "Preop": round(preop_val, 1) if isinstance(preop_val, float) else preop_val,
-                "Delta (actual)": round(delta_val, 1) if delta_val is not None else "-",
-                "Postop (actual)": round(postop_val, 1) if postop_val is not None and pd.notna(postop_val) else "-",
-            })
-
-    # Add Age
-    age_val = patient_row.get("age")
-    if age_val is not None and pd.notna(age_val):
-        table_actual.append({
-            "Parameter": "Age",
-            "Preop": age_val if not isinstance(age_val, float) else round(age_val, 0),
-            "Delta (actual)": "-",
-            "Postop (actual)": "-",
-        })
-
-    # Add GAP Score and Category
-    table_actual.append({
-        "Parameter": "GAP Score",
-        "Preop": patient_row.get("gap_score_preop", "-"),
-        "Delta (actual)": "-",
-        "Postop (actual)": patient_row.get("gap_score_postop", "-"),
-    })
-    table_actual.append({
-        "Parameter": "GAP Category",
-        "Preop": patient_row.get("gap_category", "-"),
-        "Delta (actual)": "→",
-        "Postop (actual)": patient_row.get("gap_category_postop", "-"),
-    })
-
-    # ─── CONSTRAINTS section ───
-    table_actual.append({
-        "Parameter": "─── CONSTRAINTS ───",
-        "Preop": "", "Delta (actual)": "", "Postop (actual)": "",
-    })
-
-    pi_preop = patient_row.get("PI_preop")
-    pi_postop = patient_row.get("PI_postop", pi_preop)
-    ll_preop_actual = patient_row.get("LL_preop")
-    ll_postop_actual = patient_row.get("LL_postop")
-
-    # PI-LL (ideal 0-10)
-    if pd.notna(pi_preop) and pd.notna(ll_preop_actual):
-        pi_ll_pre = pi_preop - ll_preop_actual
-        pre_s = "✓" if 0 <= pi_ll_pre <= 10 else "⚠"
-        if pd.notna(ll_postop_actual):
-            pi_ll_post = (pi_postop if pd.notna(pi_postop) else pi_preop) - ll_postop_actual
-            post_s = "✓" if 0 <= pi_ll_post <= 10 else "⚠"
-            table_actual.append({
-                "Parameter": "PI-LL (0–10)",
-                "Preop": f"{round(pi_ll_pre, 1)} {pre_s}",
-                "Delta (actual)": round(pi_ll_post - pi_ll_pre, 1),
-                "Postop (actual)": f"{round(pi_ll_post, 1)} {post_s}",
-            })
-        else:
-            table_actual.append({
-                "Parameter": "PI-LL (0–10)",
-                "Preop": f"{round(pi_ll_pre, 1)} {pre_s}",
-                "Delta (actual)": "-",
-                "Postop (actual)": "-",
-            })
-
-    # L1PA vs ideal (ideal = 0.5*PI - 21, tolerance ±3)
-    l1pa_pre = patient_row.get("L1PA_preop")
-    l1pa_post = patient_row.get("L1PA_postop")
-    if pd.notna(l1pa_pre) and pd.notna(pi_preop):
-        from src.scoring import calculate_ideal_l1pa
-        ideal_l1pa = calculate_ideal_l1pa(pi_preop)
-        diff_pre = l1pa_pre - ideal_l1pa
-        pre_s = "✓" if abs(diff_pre) <= 3 else "⚠"
-        if pd.notna(l1pa_post):
-            diff_post = l1pa_post - ideal_l1pa
-            post_s = "✓" if abs(diff_post) <= 3 else "⚠"
-            table_actual.append({
-                "Parameter": "L1PA−ideal (|d|≤3)",
-                "Preop": f"{round(diff_pre, 1)} {pre_s}",
-                "Delta (actual)": round(diff_post - diff_pre, 1),
-                "Postop (actual)": f"{round(diff_post, 1)} {post_s}",
-            })
-
-    # L4S1 (35-45)
-    l4s1_pre = patient_row.get("L4S1_preop")
-    l4s1_post = patient_row.get("L4_S1_postop")
-    if pd.notna(l4s1_pre):
-        pre_s = "✓" if 35 <= l4s1_pre <= 45 else "⚠"
-        if pd.notna(l4s1_post):
-            post_s = "✓" if 35 <= l4s1_post <= 45 else "⚠"
-            table_actual.append({
-                "Parameter": "L4S1 (35–45)",
-                "Preop": f"{round(l4s1_pre, 1)} {pre_s}",
-                "Delta (actual)": round(l4s1_post - l4s1_pre, 1),
-                "Postop (actual)": f"{round(l4s1_post, 1)} {post_s}",
-            })
-
-    # T4PA−L1PA (|diff| ≤ 3)
-    t4pa_pre = patient_row.get("T4PA_preop")
-    t4pa_post = patient_row.get("T4PA_postop")
-    if pd.notna(t4pa_pre) and pd.notna(l1pa_pre) and pd.notna(t4pa_post) and pd.notna(l1pa_post):
-        diff_pre = t4pa_pre - l1pa_pre
-        diff_post = t4pa_post - l1pa_post
-        pre_s = "✓" if abs(diff_pre) <= 3 else "⚠"
-        post_s = "✓" if abs(diff_post) <= 3 else "⚠"
-        table_actual.append({
-            "Parameter": "T4PA−L1PA (|d|≤3)",
-            "Preop": f"{round(diff_pre, 1)} {pre_s}",
-            "Delta (actual)": round(diff_post - diff_pre, 1),
-            "Postop (actual)": f"{round(diff_post, 1)} {post_s}",
-        })
-
-    # LL vs ideal (|LL - ideal| ≤ 3)
-    from src.scoring import calculate_ideal_ll
-    if pd.notna(pi_preop) and pd.notna(ll_preop_actual):
-        ideal_ll = calculate_ideal_ll(pi_preop)
-        diff_pre = ll_preop_actual - ideal_ll
-        pre_s = "✓" if abs(diff_pre) <= 3 else "⚠"
-        if pd.notna(ll_postop_actual):
-            diff_post = ll_postop_actual - ideal_ll
-            post_s = "✓" if abs(diff_post) <= 3 else "⚠"
-            table_actual.append({
-                "Parameter": "LL−ideal (|d|≤3)",
-                "Preop": f"{round(diff_pre, 1)} {pre_s}",
-                "Delta (actual)": round(diff_post - diff_pre, 1),
-                "Postop (actual)": f"{round(diff_post, 1)} {post_s}",
-            })
-
-    # GAP Category (ideal: P)
-    gap_cat_pre = patient_row.get("gap_category", "-")
-    gap_cat_post = patient_row.get("gap_category_postop", "-")
-    if gap_cat_pre != "-":
-        pre_s = "✓" if gap_cat_pre == "P" else "⚠"
-        post_s = "✓" if gap_cat_post == "P" else "⚠"
-        table_actual.append({
-            "Parameter": "GAP Cat (P)",
-            "Preop": f"{gap_cat_pre} {pre_s}",
-            "Delta (actual)": "→",
-            "Postop (actual)": f"{gap_cat_post} {post_s}",
-        })
-
-    # ── Score actual plan through models if bundles provided ──
-    if delta_bundles is not None and mech_fail_bundle is not None and presets is not None:
-        import src.optimization_utils as ou
-        from src import scoring
-
-        # Build the actual plan dict from data columns
-        actual_plan = {}
-        for var_spec in config.DECISION_VAR_SPECS:
-            col = var_spec["col_name"]
-            val = patient_row.get(col)
-            if val is not None and pd.notna(val):
-                actual_plan[col] = int(val) if not isinstance(val, str) else val
-        
-        full_input = ou.build_full_input(patient_fixed, actual_plan)
-
-        # Predict mech failure
-        mech_prob = ou.predict_mech_fail_prob(full_input, mech_fail_bundle)
-
-        # Predict all deltas
-        deltas = ou.predict_all_deltas(full_input, delta_bundles)
-
-        # Build preop dict for scoring
-        patient_preop = {
-            "PI_preop": patient_fixed.get("PI_preop"),
-            "LL_preop": patient_fixed.get("LL_preop"),
-            "SS_preop": patient_fixed.get("SS_preop"),
-            "L4S1_preop": patient_fixed.get("L4S1_preop"),
-            "GlobalTilt_preop": patient_fixed.get("GlobalTilt_preop"),
-            "T4PA_preop": patient_fixed.get("T4PA_preop"),
-            "L1PA_preop": patient_fixed.get("L1PA_preop"),
-            "age": patient_fixed.get("age"),
-            "gap_category": patient_fixed.get("gap_category"),
-        }
-        delta_predictions = {
-            "delta_LL": deltas.get("delta_LL", 0),
-            "delta_SS": deltas.get("delta_SS", 0),
-            "delta_L4S1": deltas.get("delta_L4S1", 0),
-            "delta_GlobalTilt": deltas.get("delta_GlobalTilt", 0),
-            "delta_T4PA": deltas.get("delta_T4PA", 0),
-            "delta_L1PA": deltas.get("delta_L1PA", 0),
-        }
-
-        # Predict ODI if bundle provided
-        odi_postop = None
-        if odi_bundle is not None:
-            delta_odi = ou.predict_delta(full_input, odi_bundle)
-            odi_preop = patient_fixed.get("ODI_preop")
-            if odi_preop is not None:
-                odi_postop = odi_preop + delta_odi
-
-        print("\n" + "=" * 60)
-        print("MODEL SCORES FOR ACTUAL PLAN")
-        print("=" * 60)
-        print(f"  Mech Failure Prob (predicted): {mech_prob * 100:.1f}%")
-        if odi_postop is not None:
-            print(f"  Predicted ODI (postop):        {odi_postop:.1f}")
-
-        print("\n  Scenario Scores (lower is better):")
-        # Pre-compute scores for alignment
-        score_lines = []
-        for key, preset in presets.items():
-            weights = preset["weights"]
-            score, _, _ = scoring.composite_score_from_predictions(
-                patient_preop=patient_preop,
-                delta_predictions=delta_predictions,
-                weights=weights,
-                mech_fail_prob=mech_prob,
-                odi_postop=odi_postop,
-            )
-            score_lines.append((key, preset["label"], score))
-
-        max_key_len = max(len(k) for k, _, _ in score_lines)
-        max_label_len = max(len(l) for _, l, _ in score_lines)
-        for key, label, score in score_lines:
-            padded_key = f"[{key}]".ljust(max_key_len + 3)
-            padded_label = label.ljust(max_label_len)
-            print(f"    {padded_key} {padded_label}  {score:>6.2f}")
-
-    print("\n" + "=" * 60)
-    print("ALIGNMENT PARAMETERS: PREOP → POSTOP (ACTUAL)")
-    print("=" * 60)
-
-    return pd.DataFrame(table_actual)
-
-
-def display_multiple_solutions(solutions_df, patient_fixed, side_by_side=True):
-    """
-    Display multiple solutions in detailed format (similar to best solution display).
-    Uses precomputed values from get_diverse_solutions() - no re-evaluation needed.
-    
-    Args:
-        solutions_df: DataFrame from get_diverse_solutions() with postop values already computed
-        patient_fixed: Dictionary of patient preop parameters
-        side_by_side: If True, display solutions side by side; if False, display vertically
-        
-    Returns:
-        DataFrame with all solutions side by side (if side_by_side=True), else list of DataFrames
-    """
-    from src import config
-    from IPython.display import HTML
-    
-    if side_by_side:
-        return _display_solutions_side_by_side(solutions_df, patient_fixed)
-    
-    alignment_tables = []
-    
-    for idx, row in solutions_df.iterrows():
-        print("\n" + "=" * 60)
-        print(f"SOLUTION {idx + 1}")
-        print("=" * 60)
-        print(f"\nAlignment Score: {row['composite_score']:.1f}")
-        print(f"Optimization Score: {row.get('optimization_score', '-')}")
-        print(f"Mechanical Failure Probability: {row['mech_fail_prob']}")
-        odi_postop = row.get('ODI_postop')
-        if odi_postop is not None:
-            print(f"Predicted ODI Score: {odi_postop}")
-        else:
-            print("Predicted ODI Score: N/A (no preop ODI)")
-        print(f"GAP Score: {row['gap_score']} ({row['gap_category']})")
-        
-        print("\nSurgical Plan:")
-        for col in config.PLAN_COLS:
-            if col in row.index:
-                label = _PLAN_COL_DISPLAY.get(col, col)
-                print(f"  {label}: {row[col]}")
-        
-        # Build alignment table from precomputed postop values
-        alignment_params = ["LL", "SS", "L4S1", "GlobalTilt", "T4PA", "L1PA"]
-        table_data = []
-        
-        for param in alignment_params:
-            preop_key = f"{param}_preop"
-            postop_key = f"{param}_postop"
-            
-            preop_val = patient_fixed.get(preop_key, None)
-            postop_val = row.get(postop_key, None)
-            
-            if preop_val is not None and postop_val is not None:
-                table_data.append({
-                    "Parameter": param,
-                    "Preop": round(preop_val, 1),
-                    "Delta": round(postop_val - preop_val, 1),
-                    "Postop": round(postop_val, 1),
-                })
-        
-        # Add SVA
-        sva_preop = patient_fixed.get("SVA_preop")
-        sva_postop = row.get("SVA_postop")
-        if sva_preop is not None and sva_postop is not None:
-            table_data.append({
-                "Parameter": "SVA",
-                "Preop": round(sva_preop, 1),
-                "Delta": round(sva_postop - sva_preop, 1),
-                "Postop": round(sva_postop, 1),
-            })
-        
-        # Add PI (unchanged)
-        pi_val = patient_fixed.get("PI_preop")
-        if pi_val is not None:
-            table_data.append({
-                "Parameter": "PI",
-                "Preop": round(pi_val, 1),
-                "Delta": "-",
-                "Postop": round(pi_val, 1),
-            })
-        
-        # Add PT (PT = PI - SS)
-        pt_preop = patient_fixed.get("PT_preop")
-        ss_postop = row.get("SS_postop")
-        if pt_preop is not None and pi_val is not None and ss_postop is not None:
-            pt_postop = pi_val - ss_postop
-            table_data.append({
-                "Parameter": "PT",
-                "Preop": round(pt_preop, 1),
-                "Delta": round(pt_postop - pt_preop, 1),
-                "Postop": round(pt_postop, 1),
-            })
-        
-        # Add GAP Score and GAP Category
-        gap_score_preop = patient_fixed.get("gap_score_preop", "-")
-        gap_category_preop = patient_fixed.get("gap_category", "-")
-        table_data.append({
-            "Parameter": "GAP Score",
-            "Preop": gap_score_preop,
-            "Delta": "-",
-            "Postop": row.get("gap_score", "-"),
-        })
-        table_data.append({
-            "Parameter": "GAP Category",
-            "Preop": gap_category_preop,
-            "Delta": "→",
-            "Postop": row.get("gap_category", "-"),
-        })
-        
-        # ─── CONSTRAINTS section ───
-        table_data.append({
-            "Parameter": "─── CONSTRAINTS ───",
-            "Preop": "", "Delta": "", "Postop": "",
-        })
-
-        ll_preop = patient_fixed.get("LL_preop")
-        ll_postop_v = row.get("LL_postop")
-
-        # PI-LL (ideal 0-10)
-        if pi_val is not None and ll_preop is not None and ll_postop_v is not None:
-            pi_ll_pre = pi_val - ll_preop
-            pi_ll_post = pi_val - ll_postop_v
-            pre_s = "✓" if 0 <= pi_ll_pre <= 10 else "⚠"
-            post_s = "✓" if 0 <= pi_ll_post <= 10 else "⚠"
-            table_data.append({
-                "Parameter": "PI-LL (0–10)",
-                "Preop": f"{round(pi_ll_pre, 1)} {pre_s}",
-                "Delta": round(pi_ll_post - pi_ll_pre, 1),
-                "Postop": f"{round(pi_ll_post, 1)} {post_s}",
-            })
-
-        # L1PA vs ideal (ideal = 0.5*PI - 21, tolerance ±3)
-        l1pa_pre = patient_fixed.get("L1PA_preop")
-        l1pa_post = row.get("L1PA_postop")
-        if l1pa_pre is not None and l1pa_post is not None and pi_val is not None:
-            from src.scoring import calculate_ideal_l1pa
-            ideal_l1pa = calculate_ideal_l1pa(pi_val)
-            diff_pre = l1pa_pre - ideal_l1pa
-            diff_post = l1pa_post - ideal_l1pa
-            pre_s = "✓" if abs(diff_pre) <= 3 else "⚠"
-            post_s = "✓" if abs(diff_post) <= 3 else "⚠"
-            table_data.append({
-                "Parameter": "L1PA−ideal (|d|≤3)",
-                "Preop": f"{round(diff_pre, 1)} {pre_s}",
-                "Delta": round(diff_post - diff_pre, 1),
-                "Postop": f"{round(diff_post, 1)} {post_s}",
-            })
-
-        # L4S1 (35-45)
-        l4s1_pre = patient_fixed.get("L4S1_preop")
-        l4s1_post = row.get("L4S1_postop")
-        if l4s1_pre is not None and l4s1_post is not None:
-            pre_s = "✓" if 35 <= l4s1_pre <= 45 else "⚠"
-            post_s = "✓" if 35 <= l4s1_post <= 45 else "⚠"
-            table_data.append({
-                "Parameter": "L4S1 (35–45)",
-                "Preop": f"{round(l4s1_pre, 1)} {pre_s}",
-                "Delta": round(l4s1_post - l4s1_pre, 1),
-                "Postop": f"{round(l4s1_post, 1)} {post_s}",
-            })
-
-        # T4PA−L1PA (|diff| ≤ 3)
-        t4pa_pre = patient_fixed.get("T4PA_preop")
-        t4pa_post = row.get("T4PA_postop")
-        if t4pa_pre is not None and l1pa_pre is not None and t4pa_post is not None and l1pa_post is not None:
-            diff_pre = t4pa_pre - l1pa_pre
-            diff_post = t4pa_post - l1pa_post
-            pre_s = "✓" if abs(diff_pre) <= 3 else "⚠"
-            post_s = "✓" if abs(diff_post) <= 3 else "⚠"
-            table_data.append({
-                "Parameter": "T4PA−L1PA (|d|≤3)",
-                "Preop": f"{round(diff_pre, 1)} {pre_s}",
-                "Delta": round(diff_post - diff_pre, 1),
-                "Postop": f"{round(diff_post, 1)} {post_s}",
-            })
-
-        # LL vs ideal (|LL - ideal| ≤ 3)
-        from src.scoring import calculate_ideal_ll
-        if pi_val is not None and ll_preop is not None and ll_postop_v is not None:
-            ideal_ll = calculate_ideal_ll(pi_val)
-            diff_pre = ll_preop - ideal_ll
-            diff_post = ll_postop_v - ideal_ll
-            pre_s = "✓" if abs(diff_pre) <= 3 else "⚠"
-            post_s = "✓" if abs(diff_post) <= 3 else "⚠"
-            table_data.append({
-                "Parameter": "LL−ideal (|d|≤3)",
-                "Preop": f"{round(diff_pre, 1)} {pre_s}",
-                "Delta": round(diff_post - diff_pre, 1),
-                "Postop": f"{round(diff_post, 1)} {post_s}",
-            })
-
-        # GAP Category (ideal: P)
-        gap_cat_post = row.get("gap_category", "-")
-        pre_s = "✓" if gap_category_preop == "P" else "⚠"
-        post_s = "✓" if gap_cat_post == "P" else "⚠"
-        table_data.append({
-            "Parameter": "GAP Cat (P)",
-            "Preop": f"{gap_category_preop} {pre_s}",
-            "Delta": "→",
-            "Postop": f"{gap_cat_post} {post_s}",
-        })
-        
-        df_table = pd.DataFrame(table_data)
-        alignment_tables.append(df_table)
-        
-        print("\nAlignment Parameters:")
-        display(df_table)
-    
-    return alignment_tables
-
-
-def _display_solutions_side_by_side(solutions_df, patient_fixed):
-    """
-    Display multiple solutions side by side in a single table.
-    
-    Args:
-        solutions_df: DataFrame from get_diverse_solutions()
-        patient_fixed: Dictionary of patient preop parameters
-        
-    Returns:
-        DataFrame with solutions displayed side by side
-    """
-    from src import config
-    
-    # Parameters to display
-    alignment_params = ["LL", "SS", "L4S1", "GlobalTilt", "T4PA", "L1PA", "SVA"]
-    pi_val = patient_fixed.get("PI_preop")
-    
-    # Build combined table
-    rows = []
-
-    # Helper to format a float to 1 decimal as string
-    def _f1(v):
-        return f"{v:.1f}" if isinstance(v, (int, float)) else str(v)
-    
-    # Header rows: summary info for each solution
-    summary_row = {"Parameter": "Alignment Score"}
-    for idx, row in solutions_df.iterrows():
-        summary_row[f"Sol {idx+1}"] = _f1(row["composite_score"])
-    rows.append(summary_row)
-    
-    if "optimization_score" in solutions_df.columns:
-        summary_row = {"Parameter": "Optimization Score"}
-        for idx, row in solutions_df.iterrows():
-            v = row.get("optimization_score", "-")
-            summary_row[f"Sol {idx+1}"] = _f1(v) if isinstance(v, (int, float)) else v
-        rows.append(summary_row)
-    
-    summary_row = {"Parameter": "Mech Fail Prob"}
-    for idx, row in solutions_df.iterrows():
-        summary_row[f"Sol {idx+1}"] = row["mech_fail_prob"]  # already formatted as "X.X%"
-    rows.append(summary_row)
-    
-    # ODI postop (always show)
-    summary_row = {"Parameter": "Predicted ODI"}
-    for idx, row in solutions_df.iterrows():
-        odi_val = row.get("ODI_postop") if "ODI_postop" in solutions_df.columns else None
-        summary_row[f"Sol {idx+1}"] = _f1(odi_val) if odi_val is not None else "N/A (no preop ODI)"
-    rows.append(summary_row)
-    
-    # GAP Score: show preop → postop (include categories)
-    gap_score_pre = patient_fixed.get("gap_score_preop", "-")
-    gap_cat_pre = patient_fixed.get("gap_category", "-")
-    summary_row = {"Parameter": "GAP Score"}
-    for idx, row in solutions_df.iterrows():
-        post_score = row.get("gap_score", "-")
-        post_cat = row.get("gap_category", "-")
-        summary_row[f"Sol {idx+1}"] = f"{gap_score_pre} ({gap_cat_pre}) → {post_score} ({post_cat})"
-    rows.append(summary_row)
-    
-    # Separator
-    rows.append({"Parameter": "─" * 12, **{f"Sol {idx+1}": "─" * 10 for idx in range(len(solutions_df))}})
-    
-    # Surgical plan rows
-    rows.append({"Parameter": "SURGICAL PLAN", **{f"Sol {idx+1}": "" for idx in range(len(solutions_df))}})
-    for col in config.PLAN_COLS:
-        plan_row = {"Parameter": _PLAN_COL_DISPLAY.get(col, col)}
-        for idx, row in solutions_df.iterrows():
-            plan_row[f"Sol {idx+1}"] = row.get(col, "-")
-        rows.append(plan_row)
-    
-    # Separator
-    rows.append({"Parameter": "─" * 12, **{f"Sol {idx+1}": "─" * 10 for idx in range(len(solutions_df))}})
-    
-    # Postop values
-    rows.append({"Parameter": "POSTOP VALUES", **{f"Sol {idx+1}": "" for idx in range(len(solutions_df))}})
-    
-    for param in alignment_params:
-        postop_key = f"{param}_postop"
-        param_row = {"Parameter": param}
-        for idx, row in solutions_df.iterrows():
-            val = row.get(postop_key)
-            param_row[f"Sol {idx+1}"] = _f1(val) if val is not None else "-"
-        rows.append(param_row)
-    
-    # Add PI (unchanged)
-    if pi_val is not None:
-        pi_row = {"Parameter": "PI"}
-        for idx in range(len(solutions_df)):
-            pi_row[f"Sol {idx+1}"] = _f1(pi_val)
-        rows.append(pi_row)
-    
-    # Add PT (calculated)
-    pt_preop = patient_fixed.get("PT_preop")
-    if pt_preop is not None and pi_val is not None:
-        pt_row = {"Parameter": "PT"}
-        for idx, row in solutions_df.iterrows():
-            ss_postop = row.get("SS_postop")
-            if ss_postop is not None:
-                pt_row[f"Sol {idx+1}"] = _f1(pi_val - ss_postop)
-            else:
-                pt_row[f"Sol {idx+1}"] = "-"
-        rows.append(pt_row)
-    
-    # Separator
-    rows.append({"Parameter": "─" * 12, **{f"Sol {idx+1}": "─" * 10 for idx in range(len(solutions_df))}})
-    
-    # Constraints section
-    rows.append({"Parameter": "CONSTRAINTS", **{f"Sol {idx+1}": "" for idx in range(len(solutions_df))}})
-    
-    # PI-LL (ideal: 0-10)
-    pi_ll_row = {"Parameter": "PI-LL (0–10)"}
-    for idx, row in solutions_df.iterrows():
-        ll_post = row.get("LL_postop")
-        if pi_val is not None and ll_post is not None:
-            val = pi_val - ll_post
-            status = "✓" if 0 <= val <= 10 else "⚠"
-            pi_ll_row[f"Sol {idx+1}"] = f"{val:.1f} {status}"
-        else:
-            pi_ll_row[f"Sol {idx+1}"] = "-"
-    rows.append(pi_ll_row)
-    
-    # L1PA vs ideal (ideal = 0.5*PI - 21, tolerance ±3)
-    from src.scoring import calculate_ideal_l1pa
-    l1pa_row = {"Parameter": "L1PA−ideal (|d|≤3)"}
-    for idx, row in solutions_df.iterrows():
-        val = row.get("L1PA_postop")
-        if val is not None and pi_val is not None:
-            ideal_l1pa = calculate_ideal_l1pa(pi_val)
-            diff = val - ideal_l1pa
-            status = "✓" if abs(diff) <= 3 else "⚠"
-            l1pa_row[f"Sol {idx+1}"] = f"{diff:.1f} {status}"
-        else:
-            l1pa_row[f"Sol {idx+1}"] = "-"
-    rows.append(l1pa_row)
-    
-    # L4S1 (ideal: 35-45)
-    l4s1_row = {"Parameter": "L4S1 (35–45)"}
-    for idx, row in solutions_df.iterrows():
-        val = row.get("L4S1_postop")
-        if val is not None:
-            status = "✓" if 35 <= val <= 45 else "⚠"
-            l4s1_row[f"Sol {idx+1}"] = f"{val:.1f} {status}"
-        else:
-            l4s1_row[f"Sol {idx+1}"] = "-"
-    rows.append(l4s1_row)
-    
-    # T4PA-L1PA (ideal: |diff| ≤ 3)
-    t4l1_row = {"Parameter": "T4PA−L1PA (|d|≤3)"}
-    for idx, row in solutions_df.iterrows():
-        t4pa = row.get("T4PA_postop")
-        l1pa = row.get("L1PA_postop")
-        if t4pa is not None and l1pa is not None:
-            diff = t4pa - l1pa
-            status = "✓" if abs(diff) <= 3 else "⚠"
-            t4l1_row[f"Sol {idx+1}"] = f"{diff:.1f} {status}"
-        else:
-            t4l1_row[f"Sol {idx+1}"] = "-"
-    rows.append(t4l1_row)
-    
-    # LL vs ideal (ideal LL = PI*0.54 + 27.6, tolerance ±3)
-    from src.scoring import calculate_ideal_ll
-    ll_row = {"Parameter": "LL−ideal (|d|≤3)"}
-    for idx, row in solutions_df.iterrows():
-        ll_post = row.get("LL_postop")
-        if pi_val is not None and ll_post is not None:
-            ideal_ll = calculate_ideal_ll(pi_val)
-            diff = ll_post - ideal_ll
-            status = "✓" if abs(diff) <= 3 else "⚠"
-            ll_row[f"Sol {idx+1}"] = f"{diff:.1f} {status}"
-        else:
-            ll_row[f"Sol {idx+1}"] = "-"
-    rows.append(ll_row)
-    
-    # GAP Category (ideal: P)
-    gap_row = {"Parameter": "GAP Category (P)"}
-    for idx, row in solutions_df.iterrows():
-        cat = row.get("gap_category", "-")
-        status = "✓" if cat == "P" else "⚠"
-        gap_row[f"Sol {idx+1}"] = f"{cat} {status}"
-    rows.append(gap_row)
-    
-    df_combined = pd.DataFrame(rows)
-    
-    print("=" * 60)
-    print("SOLUTIONS COMPARISON")
-    print("=" * 60)
-    
-    display(df_combined)
-    return df_combined
-
-
-def display_solutions_with_actual(solutions_df, patient_fixed, actual_result):
-    """
-    Display optimized solutions side by side with the actual plan highlighted
-    in the first column (light yellow background).
-
-    Args:
-        solutions_df: DataFrame from get_diverse_solutions() with postop values
-        patient_fixed: Dictionary of patient preop parameters
-        actual_result: dict from ou.evaluate_solution() for the actual surgical plan
-
-    Returns:
-        DataFrame with combined table (unstyled)
-    """
-    from src import config
-    from src.scoring import calculate_ideal_l1pa, calculate_ideal_ll
-    from IPython.display import display as ipy_display
-
-    alignment_params = ["LL", "SS", "L4S1", "GlobalTilt", "T4PA", "L1PA", "SVA"]
-    pi_val = patient_fixed.get("PI_preop")
-
-    col_actual = "Actual"
-    sol_cols = [f"Sol {idx+1}" for idx in range(len(solutions_df))]
-    all_cols = [col_actual] + sol_cols
-
-    rows = []
-
-    # Helper to format a float to 1 decimal as string
-    def _f1(v):
-        return f"{v:.1f}" if isinstance(v, (int, float)) else str(v)
-
-    # ── Summary rows ──
-    row = {"Parameter": "Alignment Score", col_actual: _f1(actual_result["display_composite_score"])}
-    for idx, r in solutions_df.iterrows():
-        row[f"Sol {idx+1}"] = _f1(r["composite_score"])
-    rows.append(row)
-
-    if "optimization_score" in solutions_df.columns:
-        row = {"Parameter": "Optimization Score", col_actual: _f1(actual_result["composite_score"])}
-        for idx, r in solutions_df.iterrows():
-            v = r.get("optimization_score", "-")
-            row[f"Sol {idx+1}"] = _f1(v) if isinstance(v, (int, float)) else v
-        rows.append(row)
-
-    row = {"Parameter": "Mech Fail Prob", col_actual: f"{actual_result['mech_fail_prob']*100:.1f}%"}
-    for idx, r in solutions_df.iterrows():
-        row[f"Sol {idx+1}"] = r["mech_fail_prob"]  # already formatted as "X.X%"
-    rows.append(row)
-
-    actual_odi = actual_result.get("postop_values", {}).get("ODI_postop")
-    row = {"Parameter": "Predicted ODI", col_actual: _f1(actual_odi) if actual_odi is not None else "N/A"}
-    for idx, r in solutions_df.iterrows():
-        val = r.get("ODI_postop") if "ODI_postop" in solutions_df.columns else None
-        row[f"Sol {idx+1}"] = _f1(val) if val is not None else "N/A"
-    rows.append(row)
-
-    gap_score_pre = patient_fixed.get("gap_score_preop", "-")
-    gap_cat_pre = patient_fixed.get("gap_category", "-")
-    a_gap = actual_result["gap_info"]
-    row = {"Parameter": "GAP Score", col_actual: f"{gap_score_pre} ({gap_cat_pre}) → {a_gap['gap_score']} ({a_gap['gap_category']})"}
-    for idx, r in solutions_df.iterrows():
-        row[f"Sol {idx+1}"] = f"{gap_score_pre} ({gap_cat_pre}) → {r.get('gap_score','-')} ({r.get('gap_category','-')})"
-    rows.append(row)
-
-    # ── Separator ──
-    rows.append({"Parameter": "─" * 12, **{c: "─" * 10 for c in all_cols}})
-
-    # ── Surgical Plan ──
-    rows.append({"Parameter": "SURGICAL PLAN", **{c: "" for c in all_cols}})
-    for col in config.PLAN_COLS:
-        plan_row = {"Parameter": _PLAN_COL_DISPLAY.get(col, col)}
-        plan_row[col_actual] = actual_result["plan"].get(col, "-")
-        for idx, r in solutions_df.iterrows():
-            plan_row[f"Sol {idx+1}"] = r.get(col, "-")
-        rows.append(plan_row)
-
-    rows.append({"Parameter": "─" * 12, **{c: "─" * 10 for c in all_cols}})
-
-    # ── Postop Values ──
-    rows.append({"Parameter": "POSTOP VALUES", **{c: "" for c in all_cols}})
-    for param in alignment_params:
-        postop_key = f"{param}_postop"
-        param_row = {"Parameter": param}
-        av = actual_result["postop_values"].get(postop_key)
-        param_row[col_actual] = _f1(av) if av is not None else "-"
-        for idx, r in solutions_df.iterrows():
-            val = r.get(postop_key)
-            param_row[f"Sol {idx+1}"] = _f1(val) if val is not None else "-"
-        rows.append(param_row)
-
-    if pi_val is not None:
-        pi_row = {"Parameter": "PI", **{c: _f1(pi_val) for c in all_cols}}
-        rows.append(pi_row)
-
-    pt_preop = patient_fixed.get("PT_preop")
-    if pt_preop is not None and pi_val is not None:
-        pt_row = {"Parameter": "PT"}
-        a_ss = actual_result["postop_values"].get("SS_postop")
-        pt_row[col_actual] = _f1(pi_val - a_ss) if a_ss is not None else "-"
-        for idx, r in solutions_df.iterrows():
-            ss = r.get("SS_postop")
-            pt_row[f"Sol {idx+1}"] = _f1(pi_val - ss) if ss is not None else "-"
-        rows.append(pt_row)
-
-    rows.append({"Parameter": "─" * 12, **{c: "─" * 10 for c in all_cols}})
-
-    # ── Constraints ──
-    rows.append({"Parameter": "CONSTRAINTS", **{c: "" for c in all_cols}})
-
-    # Helper to build constraint rows
-    def _constraint_row(label, actual_val, actual_check, sol_fn):
-        """Build a constraint row with status markers."""
-        cr = {"Parameter": label}
-        if actual_val is not None:
-            status = "✓" if actual_check(actual_val) else "⚠"
-            cr[col_actual] = f"{actual_val:.1f} {status}"
-        else:
-            cr[col_actual] = "-"
-        for idx, r in solutions_df.iterrows():
-            v = sol_fn(r)
-            if v is not None:
-                status = "✓" if actual_check(v) else "⚠"
-                cr[f"Sol {idx+1}"] = f"{v:.1f} {status}"
-            else:
-                cr[f"Sol {idx+1}"] = "-"
-        return cr
-
-    actual_ll = actual_result["postop_values"].get("LL_postop")
-    actual_l1pa = actual_result["postop_values"].get("L1PA_postop")
-    actual_t4pa = actual_result["postop_values"].get("T4PA_postop")
-    actual_l4s1 = actual_result["postop_values"].get("L4S1_postop")
-
-    # PI-LL (0–10)
-    pi_ll_actual = (pi_val - actual_ll) if (pi_val is not None and actual_ll is not None) else None
-    rows.append(_constraint_row(
-        "PI-LL (0–10)", pi_ll_actual, lambda v: 0 <= v <= 10,
-        lambda r: (pi_val - r["LL_postop"]) if (pi_val is not None and r.get("LL_postop") is not None) else None
-    ))
-
-    # L1PA−ideal (|d|≤3)
-    if pi_val is not None:
-        ideal_l1pa = calculate_ideal_l1pa(pi_val)
-        a_diff = (actual_l1pa - ideal_l1pa) if actual_l1pa is not None else None
-        rows.append(_constraint_row(
-            "L1PA−ideal (|d|≤3)", a_diff, lambda v: abs(v) <= 3,
-            lambda r: (r["L1PA_postop"] - ideal_l1pa) if r.get("L1PA_postop") is not None else None
-        ))
-
-    # L4S1 (35–45)
-    rows.append(_constraint_row(
-        "L4S1 (35–45)", actual_l4s1, lambda v: 35 <= v <= 45,
-        lambda r: r.get("L4S1_postop")
-    ))
-
-    # T4PA−L1PA (|d|≤3)
-    a_t4l1 = (actual_t4pa - actual_l1pa) if (actual_t4pa is not None and actual_l1pa is not None) else None
-    rows.append(_constraint_row(
-        "T4PA−L1PA (|d|≤3)", a_t4l1, lambda v: abs(v) <= 3,
-        lambda r: (r["T4PA_postop"] - r["L1PA_postop"]) if (r.get("T4PA_postop") is not None and r.get("L1PA_postop") is not None) else None
-    ))
-
-    # LL−ideal (|d|≤3)
-    if pi_val is not None:
-        ideal_ll = calculate_ideal_ll(pi_val)
-        a_ll_diff = (actual_ll - ideal_ll) if actual_ll is not None else None
-        rows.append(_constraint_row(
-            "LL−ideal (|d|≤3)", a_ll_diff, lambda v: abs(v) <= 3,
-            lambda r: (r["LL_postop"] - ideal_ll) if r.get("LL_postop") is not None else None
-        ))
-
-    # GAP Category (P)
-    gap_row = {"Parameter": "GAP Category (P)"}
-    a_cat = a_gap["gap_category"]
-    gap_row[col_actual] = f"{a_cat} {'✓' if a_cat == 'P' else '⚠'}"
-    for idx, r in solutions_df.iterrows():
-        cat = r.get("gap_category", "-")
-        gap_row[f"Sol {idx+1}"] = f"{cat} {'✓' if cat == 'P' else '⚠'}"
-    rows.append(gap_row)
-
-    df_combined = pd.DataFrame(rows)
-
-    # Style: highlight Actual column with subtle grey background
-    def _highlight_actual(col):
-        if col.name == col_actual:
-            return ["background-color: rgba(255,255,255,0.08)"] * len(col)
-        return [""] * len(col)
-
-    styled = df_combined.style.apply(_highlight_actual, axis=0).hide(axis="index")
-    ipy_display(styled)
-    return df_combined
-
-
-def display_patient_preop(patient_fixed, patient_id=None):
-    """
-    Display a compact summary of the patient's preop measurements and attributes.
+    Display a compact summary of the patient's preop measurements and attributes
+    as a two-column styled DataFrame table matching the results table format.
 
     Args:
         patient_fixed: dict of patient preoperative parameters
         patient_id: optional patient ID for the header
+        holdout_row: optional Series from holdout_df to show actual outcomes
     """
     from IPython.display import display as ipy_display, Markdown
-    from src.scoring import calculate_ideal_l1pa, calculate_ideal_ll
-
-    if patient_id is not None:
-        ipy_display(Markdown(f"**Patient {patient_id} — Preop Profile**"))
 
     pi = patient_fixed.get("PI_preop")
     ll = patient_fixed.get("LL_preop")
@@ -1162,107 +33,102 @@ def display_patient_preop(patient_fixed, patient_id=None):
             return f"{v:.{decimals}f}"
         return str(v)
 
-    # ── Demographics ──
-    demo_rows = [
-        ("Age", _fmt(patient_fixed.get("age"), 0)),
-        ("Sex", _fmt(patient_fixed.get("sex"))),
-        ("BMI", _fmt(patient_fixed.get("bmi"))),
-        ("ASA Class", _fmt(patient_fixed.get("ASA_CLASS"))),
-        ("CCI", _fmt(patient_fixed.get("CCI"))),
-        ("Revision", "Yes" if patient_fixed.get("revision") else "No"),
-    ]
-
-    # ── Alignment ──
-    align_rows = [
-        ("PI", _fmt(pi)),
-        ("LL", _fmt(ll)),
-        ("SS", _fmt(patient_fixed.get("SS_preop"))),
-        ("PT", _fmt(patient_fixed.get("PT_preop"))),
-        ("L4-S1", _fmt(patient_fixed.get("L4S1_preop"))),
-        ("T4PA", _fmt(patient_fixed.get("T4PA_preop"))),
-        ("L1PA", _fmt(patient_fixed.get("L1PA_preop"))),
-        ("SVA", _fmt(patient_fixed.get("SVA_preop"))),
-        ("Global Tilt", _fmt(patient_fixed.get("global_tilt_preop"))),
-        ("C7-CSVL", _fmt(patient_fixed.get("C7CSVL_preop"))),
-        ("Cobb (main)", _fmt(patient_fixed.get("cobb_main_curve_preop"))),
-    ]
-
-    # ── Derived / Constraint values ──
-    derived_rows = []
-    if pi is not None and ll is not None:
-        pi_ll = pi - ll
-        status = "✓" if 0 <= pi_ll <= 10 else "⚠"
-        derived_rows.append(("PI-LL", f"{pi_ll:.1f} {status}"))
-        ideal_ll = calculate_ideal_ll(pi)
-        derived_rows.append(("Ideal LL", f"{ideal_ll:.1f}"))
-    l1pa = patient_fixed.get("L1PA_preop")
-    if pi is not None and l1pa is not None:
-        ideal_l1pa = calculate_ideal_l1pa(pi)
-        diff = l1pa - ideal_l1pa
-        status = "✓" if abs(diff) <= 3 else "⚠"
-        derived_rows.append(("L1PA−ideal", f"{diff:.1f} {status}"))
-
-    # ── Bone Quality ──
-    bone_rows = [
-        ("T-score (fem neck)", _fmt(patient_fixed.get("tscore_femneck_preop"))),
-        ("HU UIV", _fmt(patient_fixed.get("HU_UIV_preop"))),
-        ("HU UIV+1", _fmt(patient_fixed.get("HU_UIVplus1_preop"))),
-        ("HU UIV+2", _fmt(patient_fixed.get("HU_UIVplus2_preop"))),
-        ("Frailty (FC)", _fmt(patient_fixed.get("FC_preop"))),
-    ]
-
-    # ── Functional ──
-    func_rows = [
-        ("ODI", _fmt(patient_fixed.get("ODI_preop"))),
-        ("GAP Score", _fmt(patient_fixed.get("gap_score_preop"))),
-        ("GAP Category", _fmt(patient_fixed.get("gap_category"))),
-    ]
-
-    # Build a two-column layout: Demographics+Bone on left, Alignment+Derived on right
-    left_rows = (
-        [("DEMOGRAPHICS", "")] + demo_rows +
-        [("", "")] +
-        [("BONE", "")] + bone_rows +
-        [("", "")] +
-        [("OTHER", "")] + func_rows
-    )
-    right_rows = (
-        [("ALIGNMENT", "")] + align_rows +
-        [("", "")] +
-        [("DERIVED", "")] + derived_rows
-    )
-
-    # Pad to equal length
-    max_len = max(len(left_rows), len(right_rows))
-    left_rows += [("", "")] * (max_len - len(left_rows))
-    right_rows += [("", "")] * (max_len - len(right_rows))
+    def _yes_no(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return "–"
+        return "Yes" if bool(v) else "No"
 
     rows = []
-    for (lp, lv), (rp, rv) in zip(left_rows, right_rows):
-        rows.append({"Attribute": lp, "Value": lv, "Attribute ": rp, "Value ": rv})
+
+    # ── Demographics ──
+    rows.append({"Parameter": "DEMOGRAPHICS", "Value": ""})
+    rows.append({"Parameter": "Age", "Value": _fmt(patient_fixed.get("age"), 0)})
+    rows.append({"Parameter": "Sex", "Value": _fmt(patient_fixed.get("sex"))})
+    rows.append({"Parameter": "BMI", "Value": _fmt(patient_fixed.get("bmi"))})
+    rows.append({"Parameter": "ASA Class", "Value": _fmt(patient_fixed.get("ASA_CLASS"))})
+    rows.append({"Parameter": "CCI", "Value": _fmt(patient_fixed.get("CCI"))})
+    rows.append({"Parameter": "Revision", "Value": "Yes" if patient_fixed.get("revision") else "No"})
+    rows.append({"Parameter": "Smoking", "Value": _yes_no(patient_fixed.get("smoking"))})
+
+    rows.append({"Parameter": "─" * 12, "Value": "─" * 10})
+
+    # ── Alignment ──
+    rows.append({"Parameter": "ALIGNMENT", "Value": ""})
+    rows.append({"Parameter": "PI", "Value": _fmt(pi)})
+    rows.append({"Parameter": "LL", "Value": _fmt(ll)})
+    rows.append({"Parameter": "SS", "Value": _fmt(patient_fixed.get("SS_preop"))})
+    rows.append({"Parameter": "PT", "Value": _fmt(patient_fixed.get("PT_preop"))})
+    rows.append({"Parameter": "L4-S1", "Value": _fmt(patient_fixed.get("L4S1_preop"))})
+    rows.append({"Parameter": "T4PA", "Value": _fmt(patient_fixed.get("T4PA_preop"))})
+    rows.append({"Parameter": "L1PA", "Value": _fmt(patient_fixed.get("L1PA_preop"))})
+    rows.append({"Parameter": "SVA", "Value": _fmt(patient_fixed.get("SVA_preop"))})
+    rows.append({"Parameter": "Global Tilt", "Value": _fmt(patient_fixed.get("global_tilt_preop"))})
+    rows.append({"Parameter": "C7-CSVL", "Value": _fmt(patient_fixed.get("C7CSVL_preop"))})
+    rows.append({"Parameter": "Cobb (main)", "Value": _fmt(patient_fixed.get("cobb_main_curve_preop"))})
+
+    rows.append({"Parameter": "─" * 12, "Value": "─" * 10})
+
+    # ── Bone Quality ──
+    rows.append({"Parameter": "BONE QUALITY", "Value": ""})
+    rows.append({"Parameter": "T-score (fem neck)", "Value": _fmt(patient_fixed.get("tscore_femneck_preop"))})
+    rows.append({"Parameter": "HU UIV", "Value": _fmt(patient_fixed.get("HU_UIV_preop"))})
+    rows.append({"Parameter": "HU UIV+1", "Value": _fmt(patient_fixed.get("HU_UIVplus1_preop"))})
+    rows.append({"Parameter": "HU UIV+2", "Value": _fmt(patient_fixed.get("HU_UIVplus2_preop"))})
+    rows.append({"Parameter": "Frailty (FC)", "Value": _fmt(patient_fixed.get("FC_preop"))})
+
+    rows.append({"Parameter": "─" * 12, "Value": "─" * 10})
+
+    # ── Functional ──
+    rows.append({"Parameter": "PRE-SURGERY SCORES", "Value": ""})
+    rows.append({"Parameter": "ODI", "Value": _fmt(patient_fixed.get("ODI_preop"))})
+    rows.append({"Parameter": "GAP Score", "Value": _fmt(patient_fixed.get("gap_score_preop"))})
+    rows.append({"Parameter": "GAP Category", "Value": _fmt(patient_fixed.get("gap_category"))})
+
+    # ── Actual Outcomes ──
+    if holdout_row is not None:
+        outcome_items = []
+        mf = holdout_row.get("mech_fail_last")
+        if mf is not None and pd.notna(mf):
+            outcome_items.append(("Mech Failure (actual)", "Yes" if mf else "No"))
+        odi_post = holdout_row.get("ODI_12mo")
+        if odi_post is not None and pd.notna(odi_post):
+            outcome_items.append(("ODI 12mo (actual)", _fmt(odi_post)))
+        if outcome_items:
+            rows.append({"Parameter": "─" * 12, "Value": "─" * 10})
+            rows.append({"Parameter": "ACTUAL OUTCOMES", "Value": ""})
+            for label, val in outcome_items:
+                rows.append({"Parameter": label, "Value": val})
 
     df = pd.DataFrame(rows)
+
+    if patient_id is not None:
+        ipy_display(Markdown(f"**Patient {patient_id} — Preop Profile**"))
+
     styled = df.style.hide(axis="index")
     ipy_display(styled)
-    return df
 
 
 def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios,
-                              deduplicate=True):
+                              deduplicate=True, include_actual=True,
+                              min_plan_diff=2, candidate_depth=12):
     """
-    Display the actual plan alongside the single best solution from each scenario,
-    with columns labeled by scenario name.
+    Display the single best solution from each scenario (and optionally the
+    actual plan) with columns labeled by scenario name.
 
-    When *deduplicate=True* and two scenarios would show the same surgical plan,
-    the duplicate is replaced by the next-best *distinct* plan from that
-    scenario's diverse solutions so every column is unique.
+    When *deduplicate=True*, scenarios are selected to maximize cross-scenario
+    plan variety while still preferring stronger objective scores.
 
     Args:
         all_results: dict mapping scenario key → run result dict (from runs.run_optimization)
         patient_fixed: dict of patient preop parameters
         actual_eval: dict from ou.evaluate_solution() for the actual surgical plan
+            (required only when include_actual=True)
         scenarios: list of scenario keys to display (in order)
-        deduplicate: if True, replace duplicate best plans with next-best distinct plan
+        deduplicate: if True, select scenario plans with diversity-aware logic
+        include_actual: if True, include an "Actual" column; if False, show only scenarios
+        min_plan_diff: minimum number of plan fields that should differ from
+            already-selected scenarios when alternatives exist
+        candidate_depth: max number of candidate rows to consider per scenario
 
     Returns:
         DataFrame with combined table (unstyled)
@@ -1275,9 +141,16 @@ def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios
 
     col_actual = "Actual"
 
+    if include_actual and actual_eval is None:
+        raise ValueError("actual_eval is required when include_actual=True")
+
     def _plan_key(result_dict):
         """Return a hashable tuple of plan values for dedup."""
         return tuple(result_dict["plan"].get(c) for c in config.PLAN_COLS)
+
+    def _plan_distance(plan_a, plan_b):
+        """Hamming distance between two plan tuples."""
+        return sum(a != b for a, b in zip(plan_a, plan_b))
 
     def _diverse_row_to_result(row):
         """Convert a diverse_df row into a best_result-style dict."""
@@ -1297,8 +170,15 @@ def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios
             },
         }
 
-    # Build best results, optionally deduplicated
-    seen_plans = set()
+    def _result_to_candidate(result_dict):
+        return {
+            "result": result_dict,
+            "plan_key": _plan_key(result_dict),
+            "score": float(result_dict.get("composite_score", 0.0)),
+        }
+
+    # Build best results, optionally deduplicated/diversified
+    seen_plan_keys = []
     scenario_cols = []
     best_results = []
     for key in scenarios:
@@ -1308,52 +188,79 @@ def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios
         label = r["label"]
         scenario_cols.append(label)
         br = r["best_result"]
+        best_candidate = _result_to_candidate(br)
 
         if not deduplicate:
             best_results.append(br)
             continue
 
-        pk = _plan_key(br)
-        if pk not in seen_plans:
-            seen_plans.add(pk)
-            best_results.append(br)
-        else:
-            # Find the first distinct plan from diverse_df
-            fallback = None
-            diverse_df = r.get("diverse_df")
-            if diverse_df is not None and not diverse_df.empty:
-                for _, drow in diverse_df.iterrows():
-                    dk = tuple(drow.get(c) for c in config.PLAN_COLS)
-                    if dk not in seen_plans:
-                        fallback = _diverse_row_to_result(drow)
-                        seen_plans.add(dk)
-                        break
-            best_results.append(fallback if fallback is not None else br)
+        candidates = [best_candidate]
+        diverse_df = r.get("diverse_df")
+        if diverse_df is not None and not diverse_df.empty:
+            for _, drow in diverse_df.head(candidate_depth).iterrows():
+                cand_result = _diverse_row_to_result(drow)
+                candidates.append(_result_to_candidate(cand_result))
 
-    all_cols = [col_actual] + scenario_cols
+        # Keep one candidate per unique plan key (best score wins)
+        unique_candidates = {}
+        for candidate in candidates:
+            pk = candidate["plan_key"]
+            prev = unique_candidates.get(pk)
+            if prev is None or candidate["score"] < prev["score"]:
+                unique_candidates[pk] = candidate
+        candidates = list(unique_candidates.values())
+
+        if not seen_plan_keys:
+            selected = min(candidates, key=lambda c: c["score"])
+        else:
+            scored_candidates = []
+            for candidate in candidates:
+                min_dist = min(_plan_distance(candidate["plan_key"], spk) for spk in seen_plan_keys)
+                scored_candidates.append((candidate, min_dist))
+
+            preferred = [item for item in scored_candidates if item[1] >= min_plan_diff]
+            pool = preferred if preferred else scored_candidates
+
+            selected, _ = min(
+                pool,
+                key=lambda item: (-item[1], item[0]["score"]),
+            )
+
+        best_results.append(selected["result"])
+        seen_plan_keys.append(selected["plan_key"])
+
+    all_cols = ([col_actual] if include_actual else []) + scenario_cols
     rows = []
 
     def _f1(v):
         return f"{v:.1f}" if isinstance(v, (int, float)) else str(v)
 
     # ── Summary rows ──
-    row = {"Parameter": "Alignment Score", col_actual: _f1(actual_eval["display_composite_score"])}
+    row = {"Parameter": "Alignment Score"}
+    if include_actual:
+        row[col_actual] = _f1(actual_eval["display_composite_score"])
     for label, br in zip(scenario_cols, best_results):
         row[label] = _f1(br["display_composite_score"])
     rows.append(row)
 
-    row = {"Parameter": "Optimization Score", col_actual: _f1(actual_eval["composite_score"])}
+    row = {"Parameter": "Optimization Score"}
+    if include_actual:
+        row[col_actual] = _f1(actual_eval["composite_score"])
     for label, br in zip(scenario_cols, best_results):
         row[label] = _f1(br["composite_score"])
     rows.append(row)
 
-    row = {"Parameter": "Mech Fail Prob", col_actual: f"{actual_eval['mech_fail_prob']*100:.1f}%"}
+    row = {"Parameter": "Mech Fail Prob"}
+    if include_actual:
+        row[col_actual] = f"{actual_eval['mech_fail_prob']*100:.1f}%"
     for label, br in zip(scenario_cols, best_results):
         row[label] = f"{br['mech_fail_prob']*100:.1f}%"
     rows.append(row)
 
-    actual_odi = actual_eval.get("postop_values", {}).get("ODI_postop")
-    row = {"Parameter": "Predicted ODI", col_actual: _f1(actual_odi) if actual_odi is not None else "N/A"}
+    actual_odi = actual_eval.get("postop_values", {}).get("ODI_postop") if include_actual else None
+    row = {"Parameter": "Predicted ODI"}
+    if include_actual:
+        row[col_actual] = _f1(actual_odi) if actual_odi is not None else "N/A"
     for label, br in zip(scenario_cols, best_results):
         odi = br.get("postop_values", {}).get("ODI_postop")
         row[label] = _f1(odi) if odi is not None else "N/A"
@@ -1361,9 +268,10 @@ def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios
 
     gap_score_pre = patient_fixed.get("gap_score_preop", "-")
     gap_cat_pre = patient_fixed.get("gap_category", "-")
-    a_gap = actual_eval["gap_info"]
-    row = {"Parameter": "GAP Score",
-           col_actual: f"{gap_score_pre} ({gap_cat_pre}) → {a_gap['gap_score']} ({a_gap['gap_category']})"}
+    a_gap = actual_eval["gap_info"] if include_actual else None
+    row = {"Parameter": "GAP Score"}
+    if include_actual:
+        row[col_actual] = f"{gap_score_pre} ({gap_cat_pre}) → {a_gap['gap_score']} ({a_gap['gap_category']})"
     for label, br in zip(scenario_cols, best_results):
         g = br["gap_info"]
         row[label] = f"{gap_score_pre} ({gap_cat_pre}) → {g['gap_score']} ({g['gap_category']})"
@@ -1376,7 +284,8 @@ def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios
     rows.append({"Parameter": "SURGICAL PLAN", **{c: "" for c in all_cols}})
     for col in config.PLAN_COLS:
         plan_row = {"Parameter": _PLAN_COL_DISPLAY.get(col, col)}
-        plan_row[col_actual] = actual_eval["plan"].get(col, "-")
+        if include_actual:
+            plan_row[col_actual] = actual_eval["plan"].get(col, "-")
         for label, br in zip(scenario_cols, best_results):
             plan_row[label] = br["plan"].get(col, "-")
         rows.append(plan_row)
@@ -1388,8 +297,9 @@ def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios
     for param in alignment_params:
         postop_key = f"{param}_postop"
         param_row = {"Parameter": param}
-        av = actual_eval["postop_values"].get(postop_key)
-        param_row[col_actual] = _f1(av) if av is not None else "-"
+        if include_actual:
+            av = actual_eval["postop_values"].get(postop_key)
+            param_row[col_actual] = _f1(av) if av is not None else "-"
         for label, br in zip(scenario_cols, best_results):
             val = br["postop_values"].get(postop_key)
             param_row[label] = _f1(val) if val is not None else "-"
@@ -1401,8 +311,9 @@ def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios
     pt_preop = patient_fixed.get("PT_preop")
     if pt_preop is not None and pi_val is not None:
         pt_row = {"Parameter": "PT"}
-        a_ss = actual_eval["postop_values"].get("SS_postop")
-        pt_row[col_actual] = _f1(pi_val - a_ss) if a_ss is not None else "-"
+        if include_actual:
+            a_ss = actual_eval["postop_values"].get("SS_postop")
+            pt_row[col_actual] = _f1(pi_val - a_ss) if a_ss is not None else "-"
         for label, br in zip(scenario_cols, best_results):
             ss = br["postop_values"].get("SS_postop")
             pt_row[label] = _f1(pi_val - ss) if ss is not None else "-"
@@ -1416,7 +327,7 @@ def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios
     def _cval(result, key):
         return result["postop_values"].get(key)
 
-    pairs = [(col_actual, actual_eval)] + list(zip(scenario_cols, best_results))
+    pairs = ([(col_actual, actual_eval)] if include_actual else []) + list(zip(scenario_cols, best_results))
 
     # PI-LL (0–10)
     cr = {"Parameter": "PI-LL (0–10)"}
@@ -1487,7 +398,7 @@ def display_best_per_scenario(all_results, patient_fixed, actual_eval, scenarios
     df_combined = pd.DataFrame(rows)
 
     def _highlight_actual(col):
-        if col.name == col_actual:
+        if include_actual and col.name == col_actual:
             return ["background-color: rgba(255,255,255,0.08)"] * len(col)
         return [""] * len(col)
 
